@@ -28,6 +28,7 @@ class CacheService {
     this.lastFetchTime = 0;
     this.lastDiskMtime = 0;
     this.lastStatCheck = 0;
+    this._hasDiskSnapshot = false;
     // Monotonic revision, bumped whenever the match set changes (in-memory
     // write or cross-worker disk reload). Downstream caches (catalog page
     // memo) key off this so a new sync invalidates everything at once.
@@ -64,29 +65,20 @@ class CacheService {
   }
 
   _ensureLoaded() {
-    if (this.cachedMatches.length === 0) {
-      this._loadDiskCache();
-    } else {
-      // Periodic or on-demand check if another worker wrote fresh data (throttled to at most once per second)
-      const now = Date.now();
-      if (this.lastStatCheck && (now - this.lastStatCheck < 1000)) return;
-      this.lastStatCheck = now;
-      try {
-        if (fs.existsSync(this.cacheFilePath)) {
-          const stats = fs.statSync(this.cacheFilePath);
-          if (stats.mtimeMs > this.lastDiskMtime) {
-            this._loadDiskCache();
-          }
-        }
-      } catch (_) {}
-    }
+    // Empty, missing and malformed snapshots need the same polling throttle
+    // as populated caches. Empty is a valid result, not a request to reread
+    // and invalidate downstream catalog caches on every access.
+    const now = Date.now();
+    if (this.lastStatCheck && (now - this.lastStatCheck < 1000)) return;
+    this.lastStatCheck = now;
+    this._loadDiskCache();
   }
 
   _loadDiskCache() {
     try {
       if (!fs.existsSync(this.cacheFilePath)) return false;
       const stats = fs.statSync(this.cacheFilePath);
-      if (stats.mtimeMs <= this.lastDiskMtime && this.cachedMatches.length > 0) {
+      if (this._hasDiskSnapshot && stats.mtimeMs <= this.lastDiskMtime) {
         return false;
       }
       const raw = fs.readFileSync(this.cacheFilePath, 'utf-8');
@@ -96,6 +88,7 @@ class CacheService {
         this.cachedMatches = this._clone(parsed.matches);
         this.lastFetchTime = parsed.timestamp || stats.mtimeMs;
         this.lastDiskMtime = stats.mtimeMs;
+        this._hasDiskSnapshot = true;
         this.rev++;
         this._rebuildIndices();
         return true;
@@ -160,6 +153,7 @@ class CacheService {
       fs.renameSync(tempPath, this.cacheFilePath);
       const stats = fs.statSync(this.cacheFilePath);
       this.lastDiskMtime = stats.mtimeMs;
+      this._hasDiskSnapshot = true;
     } catch (err) {
       console.error('[CacheService] Failed to save disk cache:', err.message);
       try { if (tempPath && fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
