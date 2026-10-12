@@ -648,6 +648,20 @@ async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts 
 }
 
 
+// Bound the response wait without cancelling the cache's background mint.
+// Release timers when work finishes early so fast requests leave no tail.
+async function settleBefore(promise, timeoutMs, fallback) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise(resolve => { timer = setTimeout(() => resolve(fallback), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function handleStream(type, id, config) {
   if ((type !== 'tv' && type !== 'series' && type !== 'channel') || !id.startsWith('nuvio_sport_')) {
     return { streams: [] };
@@ -699,24 +713,30 @@ async function handleStream(type, id, config) {
   // next request. Previously every source had to settle before anything was
   // returned, so one slow provider (WatchFooty's embed chain: ~56s/variant)
   // stalled the whole response.
-  const SOFT_DEADLINE_MS = Number(process.env.STREAM_SOFT_DEADLINE_MS || 6000);
   const HARD_DEADLINE_MS = Number(process.env.STREAM_HARD_DEADLINE_MS || 15000);
+  const SOFT_DEADLINE_MS = Math.min(Number(process.env.STREAM_SOFT_DEADLINE_MS || 6000), HARD_DEADLINE_MS);
+  const resolutionStartedAt = Date.now();
 
-  const inFlight = [];        // { key, promise } for the fallback wait
+  const inFlight = [];        // per-source promise + settled result for the fallback wait
   const races = activeSources.map((src) => {
     const key = `${src.source}:${matchId}:${src.id}`;
+    const state = { key, promise: null, settled: false, value: [] };
     const promise = resolveCache
       .getOrCreate(key, () => mintVerifiedSources(src, match, config, key))
-      .then((minted) => (Array.isArray(minted) ? minted.map((st) => ({ ...st, _cacheKey: key })) : []))
-      .catch(() => []);
-    inFlight.push({ key, promise });
+      .then((minted) => {
+        state.value = Array.isArray(minted) ? minted.map((st) => ({ ...st, _cacheKey: key })) : [];
+        state.settled = true;
+        return state.value;
+      })
+      .catch(() => { state.settled = true; return []; });
+    state.promise = promise;
+    inFlight.push(state);
     // Wrap so we can tell "settled in time" from "still running".
-    return Promise.race([
+    return settleBefore(
       promise.then((value) => ({ late: false, value })),
-      new Promise((resolve) =>
-        setTimeout(() => resolve({ late: true, value: [] }), SOFT_DEADLINE_MS)
-      ),
-    ]);
+      SOFT_DEADLINE_MS,
+      { late: true, value: [] }
+    );
   });
 
   const raced = await Promise.allSettled(races);
@@ -727,20 +747,23 @@ async function handleStream(type, id, config) {
     if (Array.isArray(r.value.value)) streams.push(...r.value.value);
   }
 
-  // Never return an empty list merely because we were impatient: if nothing
-  // usable arrived in time, wait for the remainder up to the hard ceiling.
+  // If nothing usable arrived by the soft deadline, spend the remaining hard
+  // budget waiting. Return the completed results once that budget runs out.
   if (streams.length === 0 && inFlight.length > 0) {
-    const remaining = Math.max(0, HARD_DEADLINE_MS - SOFT_DEADLINE_MS);
-    await Promise.race([
-      Promise.allSettled(inFlight.map((f) => f.promise)),
-      new Promise((r) => setTimeout(r, remaining)),
-    ]);
-    for (const f of inFlight) {
-      // Attach a handler first so a late rejection can never be unhandled.
-      const v = await f.promise.catch(() => null);
-      if (Array.isArray(v)) streams.push(...v);
+    const remaining = Math.max(0, HARD_DEADLINE_MS - (Date.now() - resolutionStartedAt));
+    if (remaining > 0) {
+      await settleBefore(
+        Promise.allSettled(inFlight.map((f) => f.promise)),
+        remaining,
+        null
+      );
     }
-    lateCount = 0;
+    for (const f of inFlight) {
+      // Snapshot only completed resolutions. Awaiting each promise here would
+      // defeat the hard deadline and let a stalled source block the response.
+      if (f.settled) streams.push(...f.value);
+    }
+    lateCount = inFlight.filter(f => !f.settled).length;
   } else if (lateCount > 0) {
     console.log(`[streams.js] Early return for ${matchId}: ${lateCount} source(s) still resolving (will be cached)`);
   }
