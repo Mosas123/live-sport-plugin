@@ -5,9 +5,22 @@
 
 const MAX_ENTRIES = 500
 const DEFAULT_CLAIM_TTL_MS = 30000
+const CLAIM_SWEEP_INTERVAL_MS = 1000
 
 const entries = new Map() // key -> { streams, status, expiresAt, storedAt }
 const claims = new Map()  // key -> claimExpiresAt (a worker is actively minting)
+let nextClaimSweepAt = 0
+
+// A failed/abandoned mint may never POST or DELETE its reservation. Reclaim
+// expired keys even if they are never requested again. Throttle full scans to
+// once per second of cache activity; no background timer keeps the server alive.
+function sweepExpiredClaims(now) {
+  if (now < nextClaimSweepAt) return
+  nextClaimSweepAt = now + CLAIM_SWEEP_INTERVAL_MS
+  for (const [key, expiresAt] of claims) {
+    if (expiresAt <= now) claims.delete(key)
+  }
+}
 
 function evictIfNeeded() {
   if (entries.size <= MAX_ENTRIES) return
@@ -25,16 +38,20 @@ function matchIdOf(key) {
 }
 
 export function cacheGet(key) {
+  const now = Date.now()
+  sweepExpiredClaims(now)
+  // The addressed key expires immediately even between full sweeps.
+  const claimExpiry = claims.get(key)
+  if (claimExpiry !== undefined && claimExpiry <= now) claims.delete(key)
   const e = entries.get(key)
   if (!e) {
     // No entry yet — but if a mint claim is held, the key is being minted by
     // another worker right now. Reporting 'minting' (not 'miss') lets the
     // polling worker wait for the result instead of duplicating the mint.
     const held = claims.get(key)
-    if (held && held > Date.now()) return { status: 'minting' }
+    if (held && held > now) return { status: 'minting' }
     return { status: 'miss' }
   }
-  const now = Date.now()
   if (now > e.expiresAt) {
     entries.delete(key)
     const held = claims.get(key)
@@ -48,9 +65,12 @@ export function cacheGet(key) {
 // fresh claim and is minting right now — the caller should poll cacheGet.
 export function cacheClaim(key, ttlMs = DEFAULT_CLAIM_TTL_MS) {
   const now = Date.now()
+  sweepExpiredClaims(now)
   const held = claims.get(key)
   if (held && held > now) return { ok: false }
-  claims.set(key, now + Math.max(5000, Number(ttlMs) || DEFAULT_CLAIM_TTL_MS))
+  const requestedTtl = Number(ttlMs)
+  const ttl = Number.isFinite(requestedTtl) && requestedTtl > 0 ? requestedTtl : DEFAULT_CLAIM_TTL_MS
+  claims.set(key, now + Math.max(5000, ttl))
   return { ok: true }
 }
 
@@ -76,6 +96,7 @@ export function cacheDelete(key) {
 // Drop entries whose match is no longer active — mirrors the worker-side
 // pruneEnded semantics, including the __channel__ evergreen exemption.
 export function cachePrune(activeIds) {
+  sweepExpiredClaims(Date.now())
   const ids = activeIds instanceof Set ? activeIds : new Set(activeIds || [])
   let pruned = 0
   for (const [key] of entries) {
@@ -93,6 +114,7 @@ export function cacheStats() {
   let ok = 0
   let failed = 0
   const now = Date.now()
+  sweepExpiredClaims(now)
   for (const [, e] of entries) {
     if (now > e.expiresAt) continue
     if (e.status === 'ok') ok++
