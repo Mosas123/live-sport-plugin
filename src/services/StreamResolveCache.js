@@ -108,7 +108,7 @@ class StreamResolveCache {
     const e = this.entries.get(key);
     if (!e) return null;
     const now = Date.now();
-    if (now > e.expiresAt) {
+    if (now >= e.expiresAt) {
       this.entries.delete(key);
       return null;
     }
@@ -126,6 +126,10 @@ class StreamResolveCache {
    */
   // Adopt a shared-cache payload into the local Map (L2 → L1).
   _adoptRemote(key, remote) {
+    // The payload can expire between the resolver's lookup and receipt here.
+    // Missing/invalid expiry must not manufacture a new lifetime for old URLs.
+    const expiresAt = Number(remote.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
     const matchId = key.split(':')[1] || '';
     const streams = Array.isArray(remote.streams) ? remote.streams : [];
     this.entries.delete(key);
@@ -133,10 +137,11 @@ class StreamResolveCache {
       streams: streams.map(cloneStream),
       matchId,
       status: remote.status === 'ok' ? 'ok' : 'failed',
-      expiresAt: Number(remote.expiresAt) || Date.now() + this.defaultTtlMs,
+      expiresAt,
       lastAccess: Date.now(),
     });
     this._evictIfNeeded();
+    return true;
   }
 
   // Poll the shared cache while another worker holds the mint claim.
@@ -197,13 +202,15 @@ class StreamResolveCache {
       let remote = await _sharedJson(enc);
       if (remote && remote.status === 'minting') remote = await this._sharedWaitMinting(key);
       if (remote && (remote.status === 'ok' || remote.status === 'failed')) {
-        this._adoptRemote(key, remote);
-        if (remote.status === 'ok') {
-          this.statsCounters.hits++;
-          return this.get(key) || [];
+        if (this._adoptRemote(key, remote)) {
+          if (remote.status === 'ok') {
+            this.statsCounters.hits++;
+            return;
+          }
+          this.statsCounters.negativeHits++;
+          return;
         }
-        this.statsCounters.negativeHits++;
-        return [];
+        remote = null; // expired in transit: claim and mint instead
       }
       if (_sharedAvailable() && (!remote || remote.status === 'miss')) {
         const claim = await _sharedJson(`${enc}?claim=1`);
@@ -211,13 +218,14 @@ class StreamResolveCache {
           // Another worker holds the claim — wait for its result.
           remote = await this._sharedWaitMinting(key);
           if (remote && (remote.status === 'ok' || remote.status === 'failed')) {
-            this._adoptRemote(key, remote);
-            if (remote.status === 'ok') {
-              this.statsCounters.hits++;
-              return this.get(key) || [];
+            if (this._adoptRemote(key, remote)) {
+              if (remote.status === 'ok') {
+                this.statsCounters.hits++;
+                return;
+              }
+              this.statsCounters.negativeHits++;
+              return;
             }
-            this.statsCounters.negativeHits++;
-            return [];
           }
         } else if (claim && claim.ok) {
           claimed = true; // we own the mint; write the result back below
@@ -314,7 +322,7 @@ class StreamResolveCache {
     }
     // Mirror the prune into the shared cache so ended matches don't linger
     // for the other worker either.
-    if (_sharedAvailable() && ids.size) {
+    if (_sharedAvailable()) {
       _sharedJson(
         '/api/cache/prune',
         {
