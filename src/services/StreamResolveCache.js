@@ -95,6 +95,7 @@ class StreamResolveCache {
 
     this.entries = new Map();   // key -> { streams, matchId, status, resolvedAt, expiresAt, lastAccess }
     this.inFlight = new Map();  // key -> Promise (mint in progress)
+    this.pendingOperations = new Map(); // key -> locally prunable operation
     this.ttl = new Map();       // sourceName -> learned TTL ms
     this.statsCounters = { hits: 0, misses: 0, negativeHits: 0, evictions: 0 };
   }
@@ -180,27 +181,35 @@ class StreamResolveCache {
     }
 
     this.statsCounters.misses++;
+    const operation = { matchId: key.split(':')[1] || '', pruned: false };
+    this.pendingOperations.set(key, operation);
 
     // Reserve this key before any shared-cache I/O. Otherwise concurrent
     // callers can all pass the pending check while the first awaits L2.
     // Defer the work so even a synchronous mint failure cleans up only after
     // the promise has been registered.
     const p = Promise.resolve()
-      .then(() => this._resolveAndStore(key, mintFn))
-      .finally(() => this.inFlight.delete(key));
+      .then(() => this._resolveAndStore(key, mintFn, operation))
+      .finally(() => {
+        this.inFlight.delete(key);
+        this.pendingOperations.delete(key);
+      });
     this.inFlight.set(key, p);
     await p.catch(() => {});
     return this.get(key) || [];
   }
 
-  async _resolveAndStore(key, mintFn) {
+  async _resolveAndStore(key, mintFn, operation) {
+    if (operation.pruned) return;
 
     // ── Shared L2: another worker may have minted (or be minting) this key ──
     let claimed = false;
     if (_sharedAvailable()) {
       const enc = _sharedKey(key);
       let remote = await _sharedJson(enc);
+      if (operation.pruned) return;
       if (remote && remote.status === 'minting') remote = await this._sharedWaitMinting(key);
+      if (operation.pruned) return;
       if (remote && (remote.status === 'ok' || remote.status === 'failed')) {
         if (this._adoptRemote(key, remote)) {
           if (remote.status === 'ok') {
@@ -214,9 +223,11 @@ class StreamResolveCache {
       }
       if (_sharedAvailable() && (!remote || remote.status === 'miss')) {
         const claim = await _sharedJson(`${enc}?claim=1`);
+        if (operation.pruned) return;
         if (claim && claim.ok === false) {
           // Another worker holds the claim — wait for its result.
           remote = await this._sharedWaitMinting(key);
+          if (operation.pruned) return;
           if (remote && (remote.status === 'ok' || remote.status === 'failed')) {
             if (this._adoptRemote(key, remote)) {
               if (remote.status === 'ok') {
@@ -239,6 +250,9 @@ class StreamResolveCache {
     const p = (async () => {
       try {
         const streams = await mintFn();
+        // Pruning can run while the provider is resolving. Discard both
+        // positive and negative late answers before touching either cache.
+        if (operation.pruned) return;
         let status = 'failed';
         let ttl = this.negativeTtlMs;
         if (Array.isArray(streams) && streams.length > 0) {
@@ -261,6 +275,7 @@ class StreamResolveCache {
           );
         }
       } catch (_) {
+        if (operation.pruned) return;
         this._set(key, sourceName, matchId, [], 'failed', this.negativeTtlMs);
         // Release the shared mint claim so other workers don't stall up to
         // SHARED_POLL_MAX_MS waiting for a result we failed to produce.
@@ -316,6 +331,11 @@ class StreamResolveCache {
   /** Drop entries whose match is no longer in the active match set. */
   pruneEnded(activeMatchIds) {
     const ids = activeMatchIds instanceof Set ? activeMatchIds : new Set(activeMatchIds || []);
+    for (const operation of this.pendingOperations.values()) {
+      if (operation.matchId && operation.matchId !== CHANNEL_MATCH_ID && !ids.has(operation.matchId)) {
+        operation.pruned = true;
+      }
+    }
     for (const [key, e] of this.entries) {
       if (e.matchId === CHANNEL_MATCH_ID) continue;
       if (e.matchId && !ids.has(e.matchId)) this.entries.delete(key);
