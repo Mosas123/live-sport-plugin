@@ -192,6 +192,7 @@ class StreamResolveCache {
 
     // ── Shared L2: another worker may have minted (or be minting) this key ──
     let claimed = false;
+    let ownerToken;
     if (_sharedAvailable()) {
       const enc = _sharedKey(key);
       let remote = await _sharedJson(enc);
@@ -206,7 +207,7 @@ class StreamResolveCache {
         return [];
       }
       if (_sharedAvailable() && (!remote || remote.status === 'miss')) {
-        const claim = await _sharedJson(`${enc}?claim=1`);
+        const claim = await _sharedJson(`${enc}?claim=1&fenced=1`);
         if (claim && claim.ok === false) {
           // Another worker holds the claim — wait for its result.
           remote = await this._sharedWaitMinting(key);
@@ -219,9 +220,12 @@ class StreamResolveCache {
             this.statsCounters.negativeHits++;
             return [];
           }
-        } else if (claim && claim.ok) {
-          claimed = true; // we own the mint; write the result back below
+        } else if (claim && claim.ok && typeof claim.ownerToken === 'string' && claim.ownerToken) {
+          ownerToken = claim.ownerToken;
+          claimed = true;
         }
+        // Older resolvers may grant a claim without an ownership token.
+        // Resolve locally, but do not issue an unsafe shared write/release.
       }
     }
 
@@ -247,7 +251,7 @@ class StreamResolveCache {
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ streams: status === 'ok' ? streams : [], ttlMs: ttl, status }),
+              body: JSON.stringify({ streams: status === 'ok' ? streams : [], ttlMs: ttl, status, ownerToken }),
             },
             2000
           );
@@ -260,7 +264,7 @@ class StreamResolveCache {
         // worker retry right away.) Releasing also restores retry diversity:
         // the other worker's attempt may succeed where ours failed.
         if (claimed && _sharedAvailable()) {
-          _sharedJson(_sharedKey(key), { method: 'DELETE' }, 1000).catch(() => {});
+          _sharedJson(`${_sharedKey(key)}?ownerToken=${encodeURIComponent(ownerToken)}`, { method: 'DELETE' }, 1000).catch(() => {});
         }
       }
     })();
