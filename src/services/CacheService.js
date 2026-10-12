@@ -48,9 +48,10 @@ class CacheService {
   _cloneMatch(m) {
     if (!m || typeof m !== 'object') return null;
     const c = { ...m };
+    if (Array.isArray(m.aliasIds)) c.aliasIds = [...m.aliasIds];
     if (Array.isArray(m.sources)) {
       c.sources = m.sources.map((s) => (s && typeof s === 'object'
-        ? { ...s, behaviorHints: s.behaviorHints ? { ...s.behaviorHints } : s.behaviorHints }
+        ? { ...s, behaviorHints: s.behaviorHints ? structuredClone(s.behaviorHints) : s.behaviorHints }
         : s));
     }
     if (m.team1 && typeof m.team1 === 'object') c.team1 = { ...m.team1 };
