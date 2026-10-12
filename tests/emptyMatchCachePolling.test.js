@@ -10,7 +10,9 @@ describe('Empty match-cache disk polling', () => {
     fs.utimesSync(cache.cacheFilePath, new Date(mtime), new Date(mtime));
   }
   function readsFor(spy) {
-    return spy.mock.calls.filter(([filename]) => filename === cache.cacheFilePath).length;
+    // Cache reads may use a path or a stable open descriptor. These synchronous
+    // scenarios perform no other descriptor-based file reads.
+    return spy.mock.calls.filter(([filename]) => filename === cache.cacheFilePath || typeof filename === 'number').length;
   }
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuvio-empty-cache-'));
