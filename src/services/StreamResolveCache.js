@@ -7,7 +7,7 @@
  *    a failed pre-flight halves it (floor 60 s) and evicts the entry.
  *  - Negative cache (~30 s) for sources that resolve to nothing or fail, so dead
  *    sources are not re-scraped on every click. getOrCreate NEVER rejects.
- *  - Entries are shallow-cloned on read, so label/preflight mutations in
+ *  - Entries and nested behavior hints are cloned on read, so label/preflight mutations in
  *    streams.js never touch the cached originals.
  *  - LRU cap + pruneEnded() keep memory bounded and drop ended matches.
  */
@@ -18,6 +18,17 @@ const MAX_TTL_MS = 10 * 60 * 1000;
 const NEGATIVE_TTL_MS = 30 * 1000;
 const MAX_ENTRIES = 200;
 const CHANNEL_MATCH_ID = '__channel__'; // evergreen 24/7 keys survive pruneEnded
+
+function cloneStream(stream) {
+  const copy = { ...stream };
+  // streams.js changes bingeGroup, notWebReady and proxyHeaders per request.
+  // Copy the entire hints tree, including request/response headers, both when
+  // storing provider results and when handing them to individual callers.
+  if (stream && stream.behaviorHints && typeof stream.behaviorHints === 'object') {
+    copy.behaviorHints = structuredClone(stream.behaviorHints);
+  }
+  return copy;
+}
 
 // ─── Shared L2 (resolver-hosted) ─────────────────────────────────────────────
 // Both cluster workers point at the same resolver child (127.0.0.1:7003), so a
@@ -92,7 +103,7 @@ class StreamResolveCache {
     return this.ttl.get(sourceName) || this.defaultTtlMs;
   }
 
-  /** Fresh positive entry? Returns a shallow clone of the streams, else null. */
+  /** Fresh positive entry? Returns streams with isolated behavior hints, else null. */
   get(key) {
     const e = this.entries.get(key);
     if (!e) return null;
@@ -105,7 +116,7 @@ class StreamResolveCache {
     this.entries.delete(key);
     this.entries.set(key, e);
     if (e.status !== 'ok') return null;
-    return e.streams.map((s) => ({ ...s }));
+    return e.streams.map(cloneStream);
   }
 
   /**
@@ -119,7 +130,7 @@ class StreamResolveCache {
     const streams = Array.isArray(remote.streams) ? remote.streams : [];
     this.entries.delete(key);
     this.entries.set(key, {
-      streams: streams.map((s) => ({ ...s })),
+      streams: streams.map(cloneStream),
       matchId,
       status: remote.status === 'ok' ? 'ok' : 'failed',
       expiresAt: Number(remote.expiresAt) || Date.now() + this.defaultTtlMs,
@@ -154,7 +165,7 @@ class StreamResolveCache {
         return [];
       }
       this.statsCounters.hits++;
-      return existing.streams.map((s) => ({ ...s }));
+      return existing.streams.map(cloneStream);
     }
 
     const pending = this.inFlight.get(key);
@@ -164,6 +175,20 @@ class StreamResolveCache {
     }
 
     this.statsCounters.misses++;
+
+    // Reserve this key before any shared-cache I/O. Otherwise concurrent
+    // callers can all pass the pending check while the first awaits L2.
+    // Defer the work so even a synchronous mint failure cleans up only after
+    // the promise has been registered.
+    const p = Promise.resolve()
+      .then(() => this._resolveAndStore(key, mintFn))
+      .finally(() => this.inFlight.delete(key));
+    this.inFlight.set(key, p);
+    await p.catch(() => {});
+    return this.get(key) || [];
+  }
+
+  async _resolveAndStore(key, mintFn) {
 
     // ── Shared L2: another worker may have minted (or be minting) this key ──
     let claimed = false;
@@ -237,21 +262,17 @@ class StreamResolveCache {
         if (claimed && _sharedAvailable()) {
           _sharedJson(_sharedKey(key), { method: 'DELETE' }, 1000).catch(() => {});
         }
-      } finally {
-        this.inFlight.delete(key);
       }
     })();
 
-    this.inFlight.set(key, p);
     await p.catch(() => {});
-    return this.get(key) || [];
   }
 
   _set(key, sourceName, matchId, streams, status, ttlMs) {
     const now = Date.now();
     this.entries.delete(key);
     this.entries.set(key, {
-      streams: streams.map((s) => ({ ...s })), // store our own copy
+      streams: streams.map(cloneStream), // store our own copy
       matchId, status,
       resolvedAt: now,
       expiresAt: now + ttlMs,
