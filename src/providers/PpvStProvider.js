@@ -58,24 +58,38 @@ class PpvStProvider extends BaseProvider {
             });
           }
 
+          const is247 = Boolean(
+            stream.tag === '24/7 channel' ||
+            stream.always_live ||
+            category === 'networks' ||
+            cat.category.toLowerCase() === '24/7 streams' ||
+            !stream.starts_at ||
+            Number(stream.starts_at) <= 0 ||
+            /^24\/7/i.test(stream.name)
+          );
+
           let team1 = null;
           let team2 = null;
-          const extracted = extractTeamsFromTitle(stream.name);
-          if (extracted) {
-            team1 = { name: extracted[0] };
-            team2 = { name: extracted[1] };
+          if (!is247) {
+            const extracted = extractTeamsFromTitle(stream.name);
+            if (extracted) {
+              team1 = { name: extracted[0] };
+              team2 = { name: extracted[1] };
+            }
           }
 
           matches.push(new MatchEntity({
             id: `ppv_${stream.id}_${slug}`,
             title: stream.name,
             baseTitle: stream.name,
-            category: this.normalizeCategory(category),
-            date: stream.starts_at ? String(stream.starts_at * 1000) : '0',
-            status: stream.starts_at && stream.starts_at * 1000 > Date.now() ? 'upcoming' : 'live',
-            league: cat.category,
-            logo: stream.poster || undefined,
-            thumbnail_url: stream.poster || undefined,
+            category: is247 ? 'networks' : this.normalizeCategory(category),
+            date: is247 ? '' : (stream.starts_at ? String(stream.starts_at * 1000) : '0'),
+            status: is247 ? '' : (stream.starts_at && stream.starts_at * 1000 > Date.now() ? 'upcoming' : 'live'),
+            popular: is247 ? '1' : undefined,
+            league: is247 ? 'Live TV' : cat.category,
+            logo: null,
+            thumbnail_url: null,
+            poster: null,
             team1: team1,
             team2: team2,
             sources: sources

@@ -157,6 +157,51 @@ describe('Shared resolve cache (worker 0 + worker 1 via resolver)', () => {
     }
   });
 
+  test('empty active set clears shared match entries but keeps evergreen channels', async () => {
+    const cache = new StreamResolveCache();
+    const endedKey = 'provider:ended_prune:s1';
+    const channelKey = 'provider:__channel__:s2';
+    for (const key of [endedKey, channelKey]) {
+      await cache.getOrCreate(key, async () => [{ url: 'https://cdn.example/prune.m3u8' }]);
+    }
+    cache.pruneEnded([]);
+    // pruneEnded sends a best-effort asynchronous POST; poll its observable
+    // result instead of depending on arbitrary network timing.
+    const deadline = Date.now() + 2500;
+    let ended;
+    do {
+      ended = await (await fetch(`${BASE}/api/cache/${encodeURIComponent(endedKey)}`)).json();
+      if (ended.status === 'miss') break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    } while (Date.now() < deadline);
+    expect(ended.status).toBe('miss');
+    const channel = await (await fetch(`${BASE}/api/cache/${encodeURIComponent(channelKey)}`)).json();
+    expect(channel.status).toBe('ok');
+    const otherWorker = new StreamResolveCache();
+    const mint = jest.fn(async () => [{ url: 'https://cdn.example/new.m3u8' }]);
+    expect(await otherWorker.getOrCreate(endedKey, mint)).toEqual([{ url: 'https://cdn.example/new.m3u8' }]);
+    expect(mint).toHaveBeenCalledTimes(1);
+  });
+
+  test('a pending mint pruned before completion never publishes its late result to L2', async () => {
+    const worker = new StreamResolveCache();
+    const key = 'provider:pending_ended:s1';
+    let finish;
+    let markStarted;
+    const started = new Promise(resolve => { markStarted = resolve; });
+    const work = new Promise(resolve => { finish = resolve; });
+    const response = worker.getOrCreate(key, () => { markStarted(); return work; });
+    await started;
+    worker.pruneEnded([]);
+    finish([{ url: 'https://cdn.example/ended.m3u8' }]);
+    expect(await response).toEqual([]);
+    expect(worker.entries.has(key)).toBe(false);
+    const remote = await (await fetch(`${BASE}/api/cache/${encodeURIComponent(key)}`)).json();
+    // An existing mint claim may remain until its normal TTL, but no stream
+    // payload (positive or negative) may be published by the pruned operation.
+    expect(['miss', 'minting']).toContain(remote.status);
+  });
+
   test('unreachable resolver falls back to local minting', async () => {
     process.env.RESOLVER_PORT = '7098'; // nothing listens here
     try {

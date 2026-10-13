@@ -101,9 +101,10 @@ describe('Replay Hubs & Clean Catalog Architecture', () => {
     const streamRes = await handleStream('series', 'nuvio_sport_rz_match_fb_1:1:1', {});
     expect(streamRes).toBeDefined();
     expect(Array.isArray(streamRes.streams)).toBe(true);
-    expect(streamRes.streams.length).toBeGreaterThan(0);
-    expect(streamRes.streams[0].name).toContain('Direct Stream');
-    expect(streamRes.streams[0].title).toContain('ReplayZone');
+    expect(streamRes.streams[0].name).toContain('Support Us');
+    const directStream = streamRes.streams.find(s => s.name && s.name.includes('Direct Stream'));
+    expect(directStream).toBeDefined();
+    expect(directStream.title).toContain('ReplayZone');
   });
 
   test('generateCollections returns valid Nuvio Collections schema with the replay sport folders', () => {

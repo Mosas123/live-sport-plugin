@@ -109,21 +109,33 @@
       </div>
 
       <!-- Crypto -->
-      <div style="display:grid; grid-template-columns:1fr; gap:8px; font-size:12px; color:var(--text-muted);">
-        <div style="background:rgba(0,0,0,0.4); padding:12px; border-radius:10px; text-align:center;">
+      <div style="display:grid; grid-template-columns:1fr; gap:10px; font-size:12px; color:var(--text-muted);">
+        <div style="background:rgba(0,0,0,0.4); padding:12px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.06);">
           <img src="/Ethereum.png" alt="ETH QR" style="width:90px; height:90px; border-radius:8px; margin-bottom:8px; border:2px solid rgba(255,255,255,0.1);">
           <div style="margin-bottom:4px; font-weight:600; color:#fff;">ETH / Polygon / Arbitrum / Base</div>
-          <div style="font-family:monospace; user-select:all; color:#ccc; word-break:break-all;">0x619eA99F0D725BEE8e0CFe9552d5F4099d15724c</div>
+          <div style="font-family:monospace; user-select:all; color:#ccc; word-break:break-all; font-size:11px; margin-bottom:8px; padding:4px 6px; background:rgba(255,255,255,0.04); border-radius:6px;">0x619eA99F0D725BEE8e0CFe9552d5F4099d15724c</div>
+          <button onclick="copyCryptoAddress('0x619eA99F0D725BEE8e0CFe9552d5F4099d15724c', this)" style="display:inline-flex; align-items:center; justify-content:center; gap:5px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); color:#fff; border-radius:20px; padding:4px 14px; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.2s;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy Address</span>
+          </button>
         </div>
-        <div style="background:rgba(0,0,0,0.4); padding:12px; border-radius:10px; text-align:center;">
+        <div style="background:rgba(0,0,0,0.4); padding:12px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.06);">
           <img src="/solana.png" alt="SOL QR" style="width:90px; height:90px; border-radius:8px; margin-bottom:8px; border:2px solid rgba(255,255,255,0.1);">
           <div style="margin-bottom:4px; font-weight:600; color:#fff;">Solana (SOL)</div>
-          <div style="font-family:monospace; user-select:all; color:#ccc; word-break:break-all;">CmuehW4PQn4yyQeXqguEpR3DjXwPPdS9Qqo4W5aWN8UU</div>
+          <div style="font-family:monospace; user-select:all; color:#ccc; word-break:break-all; font-size:11px; margin-bottom:8px; padding:4px 6px; background:rgba(255,255,255,0.04); border-radius:6px;">CmuehW4PQn4yyQeXqguEpR3DjXwPPdS9Qqo4W5aWN8UU</div>
+          <button onclick="copyCryptoAddress('CmuehW4PQn4yyQeXqguEpR3DjXwPPdS9Qqo4W5aWN8UU', this)" style="display:inline-flex; align-items:center; justify-content:center; gap:5px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); color:#fff; border-radius:20px; padding:4px 14px; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.2s;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy Address</span>
+          </button>
         </div>
-        <div style="background:rgba(0,0,0,0.4); padding:12px; border-radius:10px; text-align:center;">
+        <div style="background:rgba(0,0,0,0.4); padding:12px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.06);">
           <img src="/bitcoin.png" alt="BTC QR" style="width:90px; height:90px; border-radius:8px; margin-bottom:8px; border:2px solid rgba(255,255,255,0.1);">
           <div style="margin-bottom:4px; font-weight:600; color:#fff;">Bitcoin (BTC)</div>
-          <div style="font-family:monospace; user-select:all; color:#ccc; word-break:break-all;">bc1q9dd4nflxx8ja0vzy2phzsf8h9tr6590txgd07u</div>
+          <div style="font-family:monospace; user-select:all; color:#ccc; word-break:break-all; font-size:11px; margin-bottom:8px; padding:4px 6px; background:rgba(255,255,255,0.04); border-radius:6px;">bc1q9dd4nflxx8ja0vzy2phzsf8h9tr6590txgd07u</div>
+          <button onclick="copyCryptoAddress('bc1q9dd4nflxx8ja0vzy2phzsf8h9tr6590txgd07u', this)" style="display:inline-flex; align-items:center; justify-content:center; gap:5px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); color:#fff; border-radius:20px; padding:4px 14px; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.2s;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy Address</span>
+          </button>
         </div>
       </div>
     </div>
@@ -341,6 +353,49 @@
       if (hls) {
         hls.destroy();
         hls = null;
+      }
+    }
+
+    function checkDonateParam() {
+      if (window.location.hash === '#donate' || (window.location.search && window.location.search.includes('donate'))) {
+        const modal = document.getElementById('donate-modal');
+        if (modal) modal.style.display = 'flex';
+      }
+    }
+    window.addEventListener('DOMContentLoaded', checkDonateParam);
+    window.addEventListener('hashchange', checkDonateParam);
+    function copyCryptoAddress(text, btn) {
+      const showSuccess = () => {
+        const origHtml = btn.innerHTML;
+        btn.innerHTML = '<span>✓ Copied!</span>';
+        btn.style.background = '#10b981';
+        btn.style.borderColor = '#10b981';
+        setTimeout(() => {
+          btn.innerHTML = origHtml;
+          btn.style.background = 'rgba(255,255,255,0.1)';
+          btn.style.borderColor = 'rgba(255,255,255,0.15)';
+        }, 2000);
+      };
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(showSuccess).catch(() => {
+          fallbackCopy(text);
+          showSuccess();
+        });
+      } else {
+        fallbackCopy(text);
+        showSuccess();
+      }
+
+      function fallbackCopy(val) {
+        const ta = document.createElement('textarea');
+        ta.value = val;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (_) {}
+        document.body.removeChild(ta);
       }
     }
 

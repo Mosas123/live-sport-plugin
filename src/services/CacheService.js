@@ -2,6 +2,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+function diskSignature(stats) {
+  // Atomic replacements can share a timestamp or move it backwards. Compare
+  // file identity and metadata rather than requiring a newer wall-clock mtime.
+  return [stats.dev, stats.ino, stats.size, stats.mtimeMs, stats.ctimeMs].join(':');
+}
+
 function resolveCacheFile() {
   // Jest runs test files in parallel worker processes that all share the repo's
   // matches_cache.json. Concurrent setMatches() calls overwrite each other and
@@ -28,6 +34,8 @@ class CacheService {
     this.lastFetchTime = 0;
     this.lastDiskMtime = 0;
     this.lastStatCheck = 0;
+    this._hasDiskSnapshot = false;
+    this._diskSignature = null;
     // Monotonic revision, bumped whenever the match set changes (in-memory
     // write or cross-worker disk reload). Downstream caches (catalog page
     // memo) key off this so a new sync invalidates everything at once.
@@ -64,43 +72,49 @@ class CacheService {
   }
 
   _ensureLoaded() {
-    if (this.cachedMatches.length === 0) {
-      this._loadDiskCache();
-    } else {
-      // Periodic or on-demand check if another worker wrote fresh data (throttled to at most once per second)
-      const now = Date.now();
-      if (this.lastStatCheck && (now - this.lastStatCheck < 1000)) return;
-      this.lastStatCheck = now;
-      try {
-        if (fs.existsSync(this.cacheFilePath)) {
-          const stats = fs.statSync(this.cacheFilePath);
-          if (stats.mtimeMs > this.lastDiskMtime) {
-            this._loadDiskCache();
-          }
-        }
-      } catch (_) {}
-    }
+    // Empty, missing and malformed snapshots need the same polling throttle
+    // as populated caches. Empty is a valid result, not a request to reread
+    // and invalidate downstream catalog caches on every access.
+    const now = Date.now();
+    if (this.lastStatCheck && (now - this.lastStatCheck < 1000)) return;
+    this.lastStatCheck = now;
+    this._loadDiskCache();
   }
 
   _loadDiskCache() {
+    let fd;
     try {
       if (!fs.existsSync(this.cacheFilePath)) return false;
-      const stats = fs.statSync(this.cacheFilePath);
-      if (stats.mtimeMs <= this.lastDiskMtime && this.cachedMatches.length > 0) {
+      const pathStats = fs.statSync(this.cacheFilePath);
+      if (this._hasDiskSnapshot && diskSignature(pathStats) === this._diskSignature) {
         return false;
       }
-      const raw = fs.readFileSync(this.cacheFilePath, 'utf-8');
+      // Open once: another worker can rename a replacement between path stat
+      // and read. Derive both the bytes and stored signature from this handle.
+      fd = fs.openSync(this.cacheFilePath, 'r');
+      const stats = fs.fstatSync(fd);
+      const signature = diskSignature(stats);
+      if (this._hasDiskSnapshot && signature === this._diskSignature) return false;
+      const raw = fs.readFileSync(fd, 'utf-8');
       if (!raw || raw.length < 2) return false;
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.matches)) {
         this.cachedMatches = this._clone(parsed.matches);
         this.lastFetchTime = parsed.timestamp || stats.mtimeMs;
         this.lastDiskMtime = stats.mtimeMs;
+        this._hasDiskSnapshot = true;
+        this._diskSignature = signature;
         this.rev++;
         this._rebuildIndices();
         return true;
       }
-    } catch (_) {}
+    } catch (_) {
+      // Keep the previous snapshot if the new file is unavailable or invalid.
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch (_) {}
+      }
+    }
     return false;
   }
 
@@ -148,6 +162,7 @@ class CacheService {
 
   _saveDiskCache(matches) {
     let tempPath;
+    let fd;
     try {
       const dir = path.dirname(this.cacheFilePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -157,11 +172,21 @@ class CacheService {
         matches: matches
       });
       fs.writeFileSync(tempPath, payload, 'utf-8');
+      fd = fs.openSync(tempPath, 'r');
       fs.renameSync(tempPath, this.cacheFilePath);
-      const stats = fs.statSync(this.cacheFilePath);
+      tempPath = null;
+      // A different worker may already have replaced the destination path.
+      // Remember our own written snapshot, not that worker's file metadata.
+      const stats = fs.fstatSync(fd);
       this.lastDiskMtime = stats.mtimeMs;
+      this._hasDiskSnapshot = true;
+      this._diskSignature = diskSignature(stats);
     } catch (err) {
       console.error('[CacheService] Failed to save disk cache:', err.message);
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch (_) {}
+      }
       try { if (tempPath && fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
     }
   }

@@ -445,11 +445,23 @@ function mapMatchToMetaPreview(match, config = {}, reqType = 'tv') {
     imageService.proxyUrl(BASE_URL, sourceUrl, { text: fbText, color: c, embed });
 
   // ─── TIER 1: Provider's Own Artwork (Highest Priority) ───
-  const providerPoster = match.poster ? normalizeImageUrl(match.poster) : null;
+  let providerPoster = match.poster ? normalizeImageUrl(match.poster) : null;
   let providerLogo = match.logo ? normalizeImageUrl(match.logo) : null;
   let providerThumb = match.thumbnail_url ? normalizeImageUrl(match.thumbnail_url) : null;
   const providerTeamLogo = match.team1 && match.team1.logo ? normalizeImageUrl(match.team1.logo) : null;
   const providerTeamLogo2 = match.team2 && match.team2.logo ? normalizeImageUrl(match.team2.logo) : null;
+
+  // Filter out low-res static stream screenshots from PPV services
+  if (providerPoster && /ppvservices\.st/i.test(providerPoster)) providerPoster = null;
+  if (providerThumb && /ppvservices\.st/i.test(providerThumb)) providerThumb = null;
+  if (providerLogo && /ppvservices\.st/i.test(providerLogo)) providerLogo = null;
+
+  // 24/7 TV channels are continuous network stations (Fox Cricket, Willow, NHL Network, etc.),
+  // not sporting fixtures with posters. Always generate clean official TV network cards.
+  if (match.category === 'networks') {
+    providerPoster = null;
+    providerThumb = null;
+  }
 
   // ─── TIER 2: Fallback Lookups (Only evaluated if provider didn't supply artwork) ───
   let fallbackTeamLogo = null;

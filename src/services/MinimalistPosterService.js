@@ -526,8 +526,8 @@ function generateDateSvg(displayDate, count = 0, sportKey = null, shape = 'poste
 
 // Cinematic Broadcast tokens: film-grade warm/cool volumetrics on a near-black
 // base. Condensed type for names, a neutral grotesque for chrome.
-const CARD_COND = "'Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif";
-const CARD_SANS = "'Helvetica Neue',Helvetica,Arial,sans-serif";
+const CARD_COND = "'Bahnschrift Condensed','Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif";
+const CARD_SANS = "'Bahnschrift','Arial Narrow','Helvetica Neue',Helvetica,Arial,sans-serif";
 const CARD_FALLBACK_ACCENT = '#ff7a1a';
 const CARD_HOT = '#ff7a1a';
 const CARD_HOT_SOFT = '#ff9a45';
@@ -884,39 +884,38 @@ function generateMatchCardSvg(spec = {}) {
     const label = (leagueName || 'LIVE SPORTS').toUpperCase();
     let lx = margin;
     if (leagueBadge) {
-      parts.push('<circle cx="' + (margin + 8) + '" cy="' + (headerY - 4) + '" r="9" fill="rgba(255,255,255,0.10)"/>');
-      parts.push(badgeImage(leagueBadge, margin, headerY - 12, 16));
-      lx = margin + 24;
+      parts.push('<circle cx="' + (margin + 8) + '" cy="' + (headerY - 4) + '" r="10" fill="rgba(255,255,255,0.10)"/>');
+      parts.push(badgeImage(leagueBadge, margin, headerY - 13, 18));
+      lx = margin + 26;
     }
-    parts.push('<text x="' + lx + '" y="' + (headerY + 1) + '" font-family="' + CARD_COND + '" font-size="17" font-weight="800" letter-spacing="2.2" fill="' + leagueAccent + '">' + escapeXml(label) + '</text>');
+    parts.push('<text x="' + lx + '" y="' + (headerY + 1) + '" font-family="' + CARD_COND + '" font-size="20" font-weight="800" letter-spacing="3" fill="' + leagueAccent + '">' + escapeXml(label) + '</text>');
   }
 
-  // ── Header: status pill (right) - status word only; the score lives in the hero slot ──
+  // ── Header: solid state tag (right) - status word only; the score lives in the hero slot ──
   if (status) {
     const conf = {
-      live: { t: 'LIVE', dot: true, color: '#ff8a8a', dotColor: '#ff3b3b' },
-      upcoming: { t: 'UPCOMING', dot: true, color: CARD_HOT_SOFT, dotColor: CARD_HOT },
-      replay: { t: 'REPLAY', dot: false, color: CARD_HOT_SOFT },
-      '247': { t: '24/7', dot: false, color: CARD_HOT_SOFT }
+      live: { t: 'LIVE' },
+      upcoming: { t: 'UPCOMING' },
+      replay: { t: 'REPLAY' },
+      '247': { t: '24/7' }
     }[status];
-    const dotR = 4.5;
 
-    // Status-only pill. A score is never squeezed in here: when a score exists
-    // it takes the hero slot, so the pill stays a compact status chip.
-    const pillW = 34 + (conf.dot ? dotR * 2 + 8 : 0) + conf.t.length * 10.5;
-    const pillH = 28;
-    const pillY = headerY - pillH / 2;
-    const pillX = w - margin - pillW;
-    const pillStroke = status === 'live' ? 'rgba(255,90,90,0.5)' : 'rgba(255,154,69,0.45)';
-    const pillFill = status === 'live' ? 'rgba(255,60,60,0.14)' : 'rgba(255,122,26,0.12)';
-    parts.push('<rect x="' + pillX.toFixed(1) + '" y="' + pillY.toFixed(1) + '" width="' + pillW.toFixed(1) + '" height="' + pillH + '" rx="' + (pillH / 2) + '" fill="' + pillFill + '" stroke="' + pillStroke + '" stroke-width="1"/>');
-    let px = pillX + 17;
-    if (conf.dot) {
-      parts.push('<circle cx="' + (px + dotR).toFixed(1) + '" cy="' + headerY + '" r="' + dotR + '" fill="' + conf.dotColor + '"/>');
-      px += dotR * 2 + 8;
+    // Solid state tag. live is the only shouting state (solid red, white dot);
+    // upcoming / replay keep the amber language as a solid field with dark ink.
+    const padX = 17;
+    const fsTag = 16;
+    const textW = Math.round(conf.t.length * (fsTag * 0.66 + 2));
+    const dotBlock = status === 'live' ? 18 : 0;
+    const tagW = padX * 2 + dotBlock + textW;
+    const tagX = w - margin - tagW;
+    const isLiveTag = status === 'live';
+    parts.push('<rect x="' + tagX.toFixed(1) + '" y="34" width="' + tagW + '" height="32" rx="6" fill="' + (isLiveTag ? '#ef4444' : CARD_HOT) + '"/>');
+    if (isLiveTag) {
+      parts.push('<circle cx="' + (tagX + padX + 3) + '" cy="50" r="4" fill="#ffffff"/>');
+      parts.push('<text x="' + (tagX + padX + dotBlock).toFixed(1) + '" y="56" font-family="' + CARD_SANS + '" font-size="' + fsTag + '" font-weight="800" letter-spacing="2" fill="#ffffff">' + escapeXml(conf.t) + '</text>');
+    } else {
+      parts.push('<text x="' + (tagX + padX).toFixed(1) + '" y="56" font-family="' + CARD_SANS + '" font-size="' + fsTag + '" font-weight="800" letter-spacing="2" fill="#1a1208">' + escapeXml(conf.t) + '</text>');
     }
-    parts.push('<text x="' + px.toFixed(1) + '" y="' + (headerY + 5).toFixed(1) + '" font-family="' + CARD_SANS + '" font-size="14" font-weight="800" letter-spacing="1.4" fill="' + conf.color + '">' + escapeXml(conf.t) + '</text>');
-
   }
 
   // Circular crest plates: soft glass disc, thin rim.
@@ -935,7 +934,7 @@ function generateMatchCardSvg(spec = {}) {
         '<text x="' + cx + '" y="' + (cy + r * 0.33).toFixed(1) + '" font-family="' + CARD_COND + '" font-size="' + Math.round(r * 0.88) + '" font-weight="800" fill="url(#nameFill)" text-anchor="middle">' + escapeXml(m[0].toUpperCase()) + '</text>';
     }
     return '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="rgba(255,255,255,0.045)" stroke="rgba(255,255,255,0.14)" stroke-width="1.2"/>' +
-      badgeImage(img, cx - r * 0.66, cy - r * 0.66, r * 1.32);
+      badgeImage(img, cx - r * 0.75, cy - r * 0.75, r * 1.5);
   };
 
   const vsBadge = (mx, my, r) =>
@@ -943,7 +942,7 @@ function generateMatchCardSvg(spec = {}) {
     '<text x="' + mx + '" y="' + (my + 5) + '" font-family="' + CARD_SANS + '" font-size="' + Math.round(r * 0.6) + '" font-weight="800" letter-spacing="1.5" fill="' + CARD_HOT_SOFT + '" text-anchor="middle">VS</text>';
 
   const teamName = (x, y, name, size) => name
-    ? '<text x="' + x + '" y="' + y + '" font-family="' + CARD_COND + '" font-size="' + size + '" font-weight="700" letter-spacing="1.1" fill="url(#nameFill)" text-anchor="middle">' + escapeXml(name.toUpperCase()) + '</text>'
+    ? '<text x="' + x + '" y="' + y + '" font-family="' + CARD_COND + '" font-size="' + size + '" font-weight="700" letter-spacing="1.4" fill="url(#nameFill)" text-anchor="middle">' + escapeXml(name.toUpperCase()) + '</text>'
     : '';
 
   if (!isPoster) {
@@ -962,15 +961,15 @@ function generateMatchCardSvg(spec = {}) {
       const heroRule = Math.min(heroGap * 0.5, scoreDisplay.length * heroScoreSize * 0.29);
       const ruleY = isCricket && oversText ? 276 : 264;
       parts.push('<rect x="' + (400 - heroRule / 2).toFixed(1) + '" y="' + ruleY + '" width="' + heroRule.toFixed(1) + '" height="3" rx="1.5" fill="' + CARD_HOT + '" opacity="0.85"/>');
-      parts.push(teamName(168, 312, team1, 21));
-      parts.push(teamName(632, 312, team2, 21));
+      parts.push(teamName(168, 312, team1, 24));
+      parts.push(teamName(632, 312, team2, 24));
       parts.push('<line x1="' + margin + '" y1="392" x2="' + (w - margin) + '" y2="392" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else if (available === 2) {
       parts.push(crest(200, 188, 104, badge1, team1));
       parts.push(crest(600, 188, 104, badge2, team2));
       parts.push(vsBadge(400, 188, 30));
-      parts.push(teamName(200, 346, team1, 25));
-      parts.push(teamName(600, 346, team2, 25));
+      parts.push(teamName(200, 346, team1, 29));
+      parts.push(teamName(600, 346, team2, 29));
       parts.push('<line x1="' + margin + '" y1="392" x2="' + (w - margin) + '" y2="392" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else if (available === 1) {
       // Two-plate geometry is preserved when only one crest resolved: the side
@@ -979,8 +978,8 @@ function generateMatchCardSvg(spec = {}) {
       parts.push(crest(200, 188, 104, badge1, team1));
       parts.push(crest(600, 188, 104, badge2, team2));
       parts.push(vsBadge(400, 188, 30));
-      parts.push(teamName(200, 346, team1, 25));
-      parts.push(teamName(600, 346, team2, 25));
+      parts.push(teamName(200, 346, team1, 29));
+      parts.push(teamName(600, 346, team2, 29));
       parts.push('<line x1="' + margin + '" y1="392" x2="' + (w - margin) + '" y2="392" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else if (available === 0 && catKey === 'tennis' && team1 && team2) {
       // ── Landscape Tennis: Monogram Crests & Racket Icon ──
@@ -988,8 +987,8 @@ function generateMatchCardSvg(spec = {}) {
       parts.push(crest(600, 188, 104, null, team2));
       parts.push('<circle cx="400" cy="188" r="40" fill="rgba(255,255,255,0.04)" stroke="rgba(132, 204, 22, 0.4)" stroke-width="1.5"/>');
       parts.push('<g transform="translate(378, 166) scale(0.6)"><path d="M12 18 Q36 36 12 54" stroke="#f8fafc" stroke-width="3" fill="none"/><path d="M60 18 Q36 36 60 54" stroke="#f8fafc" stroke-width="3" fill="none"/><circle cx="36" cy="36" r="32" stroke="#84cc16" stroke-width="3" fill="rgba(132, 204, 22, 0.15)"/></g>');
-      parts.push(teamName(200, 346, team1, 25));
-      parts.push(teamName(600, 346, team2, 25));
+      parts.push(teamName(200, 346, team1, 29));
+      parts.push(teamName(600, 346, team2, 29));
       parts.push('<line x1="' + margin + '" y1="392" x2="' + (w - margin) + '" y2="392" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else {
       // No fixture crests. If a channel logo exists it becomes the hero mark
@@ -1073,23 +1072,23 @@ function generateMatchCardSvg(spec = {}) {
       const heroRule = Math.min(heroGap * 0.5, scoreDisplay.length * heroScoreSize * 0.29);
       const ruleY = isCricket && oversText ? 352 : 338;
       parts.push('<rect x="' + (300 - heroRule / 2).toFixed(1) + '" y="' + ruleY + '" width="' + heroRule.toFixed(1) + '" height="3" rx="1.5" fill="' + CARD_HOT + '" opacity="0.85"/>');
-      parts.push(teamName(110, 390, team1, 20));
-      parts.push(teamName(490, 390, team2, 20));
+      parts.push(teamName(110, 390, team1, 23));
+      parts.push(teamName(490, 390, team2, 23));
       parts.push('<line x1="' + margin + '" y1="512" x2="' + (w - margin) + '" y2="512" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else if (available === 2) {
       parts.push(crest(186, 296, 78, badge1, team1));
       parts.push(crest(414, 296, 78, badge2, team2));
       parts.push(vsBadge(300, 296, 26));
-      parts.push(teamName(186, 432, team1, 24));
-      parts.push(teamName(414, 432, team2, 24));
+      parts.push(teamName(186, 432, team1, 27));
+      parts.push(teamName(414, 432, team2, 27));
       parts.push('<line x1="' + margin + '" y1="512" x2="' + (w - margin) + '" y2="512" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else if (available === 1) {
       // Same two-plate guarantee as the landscape canvas.
       parts.push(crest(186, 296, 78, badge1, team1));
       parts.push(crest(414, 296, 78, badge2, team2));
       parts.push(vsBadge(300, 296, 26));
-      parts.push(teamName(186, 432, team1, 24));
-      parts.push(teamName(414, 432, team2, 24));
+      parts.push(teamName(186, 432, team1, 27));
+      parts.push(teamName(414, 432, team2, 27));
       parts.push('<line x1="' + margin + '" y1="532" x2="' + (w - margin) + '" y2="532" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else if (available === 0 && catKey === 'tennis' && team1 && team2) {
       // ── Poster Tennis: Monogram Crests & Racket Icon ──
@@ -1097,8 +1096,8 @@ function generateMatchCardSvg(spec = {}) {
       parts.push(crest(414, 296, 78, null, team2));
       parts.push('<circle cx="300" cy="296" r="34" fill="rgba(255,255,255,0.04)" stroke="rgba(132, 204, 22, 0.4)" stroke-width="1.5"/>');
       parts.push('<g transform="translate(282, 278) scale(0.5)"><path d="M12 18 Q36 36 12 54" stroke="#f8fafc" stroke-width="3" fill="none"/><path d="M60 18 Q36 36 60 54" stroke="#f8fafc" stroke-width="3" fill="none"/><circle cx="36" cy="36" r="32" stroke="#84cc16" stroke-width="3" fill="rgba(132, 204, 22, 0.15)"/></g>');
-      parts.push(teamName(186, 432, team1, 24));
-      parts.push(teamName(414, 432, team2, 24));
+      parts.push(teamName(186, 432, team1, 27));
+      parts.push(teamName(414, 432, team2, 27));
       parts.push('<line x1="' + margin + '" y1="512" x2="' + (w - margin) + '" y2="512" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>');
     } else {
       const allowChannelHero = channelMark && catKey !== 'motorsport';
@@ -1161,18 +1160,18 @@ function generateMatchCardSvg(spec = {}) {
   // ── Footer: centred time + channel mark ──
   const footerY = isPoster ? h - 58 : 412;
   if (timeText) {
-    parts.push('<text x="' + (w / 2) + '" y="' + footerY + '" font-family="' + CARD_SANS + '" font-size="22" font-weight="700" letter-spacing="1.5" fill="rgba(255,255,255,0.95)" text-anchor="middle">' + escapeXml(timeText.toUpperCase()) + '</text>');
+    parts.push('<text x="' + (w / 2) + '" y="' + footerY + '" font-family="' + CARD_COND + '" font-size="24" font-weight="700" letter-spacing="2.6" fill="rgba(255,255,255,0.95)" text-anchor="middle">' + escapeXml(timeText.toUpperCase()) + '</text>');
   }
   if (channelName || channelBadge) {
     const label = channelName.toUpperCase();
-    const chipW = (channelBadge ? 22 + 8 : 0) + label.length * 8.8;
+    const chipW = (channelBadge ? 24 + 8 : 0) + label.length * 9.4;
     let px = w - margin - chipW;
     if (channelBadge) {
-      parts.push(badgeImage(channelBadge, px, footerY - 15, 22));
+      parts.push(badgeImage(channelBadge, px, footerY - 16, 24));
       px += 30;
     }
     if (label) {
-      parts.push('<text x="' + px.toFixed(1) + '" y="' + (footerY + 3) + '" font-family="' + CARD_SANS + '" font-size="14" font-weight="600" letter-spacing="1.4" fill="rgba(255,255,255,0.75)">' + escapeXml(label) + '</text>');
+      parts.push('<text x="' + px.toFixed(1) + '" y="' + (footerY + 3) + '" font-family="' + CARD_COND + '" font-size="15" font-weight="600" letter-spacing="1.6" fill="rgba(255,255,255,0.75)">' + escapeXml(label) + '</text>');
     }
   }
 

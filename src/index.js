@@ -84,6 +84,10 @@ app.get(['/configure', '/:config/configure'], (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'configure.html'));
 });
 
+app.get(['/donate', '/:config/donate'], (req, res) => {
+  res.redirect('/#donate');
+});
+
 // ─── Nuvio Native Collections ─────────────────────────────────────────
 // Serves Nuvio Collections JSON schema for Sports Replays & Live Sports.
 // Compatible with Nuvio's Collection import from URL or file.
@@ -786,12 +790,12 @@ app.use((req, res, next) => {
         const rewriteUrl = (url) => {
           if (!url || typeof url !== 'string') return url;
           // Relative URLs
-          if (url.startsWith('/img') || url.startsWith('/watch') || url.startsWith('/api/manifest') || url.startsWith('/logo') || url.startsWith('/api/mp4proxy') || url.startsWith('/api/fastmp4') || url.startsWith('/api/hlschunk') || url.startsWith('/posters')) {
+          if (url.startsWith('/img') || url.startsWith('/watch') || url.startsWith('/api/manifest') || url.startsWith('/logo') || url.startsWith('/api/mp4proxy') || url.startsWith('/api/fastmp4') || url.startsWith('/api/hlschunk') || url.startsWith('/posters') || url.startsWith('/donate')) {
             modified = true;
             return `${currentBaseUrl}${url}`;
           }
           // Absolute URLs with legacy/static base or localhost/LAN IP
-          const match = url.match(/^(?:https?:\/\/[^\/]+)(\/(?:img|watch|api\/manifest|api\/mp4proxy|api\/fastmp4|api\/hlschunk|logo|posters)(?:[?\/].*|\.[A-Za-z0-9]+)?)$/);
+          const match = url.match(/^(?:https?:\/\/[^\/]+)(\/(?:img|watch|api\/manifest|api\/mp4proxy|api\/fastmp4|api\/hlschunk|logo|posters|donate)(?:[?\/].*|\.[A-Za-z0-9]+)?)$/);
           if (match) {
             modified = true;
             return `${currentBaseUrl}${match[1]}`;

@@ -644,18 +644,30 @@
               <div class="crypto-short">ETH</div>
               <div class="crypto-name">Polygon, Arbitrum, Base</div>
               <div class="crypto-addr" title="Click to select">0x619eA99F0D725BEE8e0CFe9552d5F4099d15724c</div>
+              <button type="button" onclick="copyCryptoAddr('0x619eA99F0D725BEE8e0CFe9552d5F4099d15724c', this)" style="margin-top:6px; background:rgba(255,255,255,0.08); border:1px solid var(--line); color:var(--text); border-radius:12px; padding:3px 8px; font-size:10px; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:4px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
             </div>
             <div class="crypto">
               <img src="/solana.png" alt="Solana address QR code">
               <div class="crypto-short">SOL</div>
               <div class="crypto-name">Solana</div>
               <div class="crypto-addr" title="Click to select">CmuehW4PQn4yyQeXqguEpR3DjXwPPdS9Qqo4W5aWN8UU</div>
+              <button type="button" onclick="copyCryptoAddr('CmuehW4PQn4yyQeXqguEpR3DjXwPPdS9Qqo4W5aWN8UU', this)" style="margin-top:6px; background:rgba(255,255,255,0.08); border:1px solid var(--line); color:var(--text); border-radius:12px; padding:3px 8px; font-size:10px; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:4px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
             </div>
             <div class="crypto">
               <img src="/bitcoin.png" alt="Bitcoin address QR code">
               <div class="crypto-short">BTC</div>
               <div class="crypto-name">Bitcoin</div>
               <div class="crypto-addr" title="Click to select">bc1q9dd4nflxx8ja0vzy2phzsf8h9tr6590txgd07u</div>
+              <button type="button" onclick="copyCryptoAddr('bc1q9dd4nflxx8ja0vzy2phzsf8h9tr6590txgd07u', this)" style="margin-top:6px; background:rgba(255,255,255,0.08); border:1px solid var(--line); color:var(--text); border-radius:12px; padding:3px 8px; font-size:10px; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:4px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
             </div>
           </div>
         </details>
@@ -1304,6 +1316,29 @@
         })
         .catch(() => {});
     }
+
+    window.copyCryptoAddr = function(text, btn) {
+      const orig = btn.innerHTML;
+      const showSuccess = () => {
+        btn.innerHTML = '<span>✓ Copied!</span>';
+        btn.style.background = '#10b981';
+        btn.style.borderColor = '#10b981';
+        setTimeout(() => {
+          btn.innerHTML = orig;
+          btn.style.background = 'rgba(255,255,255,0.08)';
+          btn.style.borderColor = 'var(--line)';
+        }, 2000);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(showSuccess).catch(() => {
+          legacyCopy(text);
+          showSuccess();
+        });
+      } else {
+        legacyCopy(text);
+        showSuccess();
+      }
+    };
   </script>
 </body>
 
