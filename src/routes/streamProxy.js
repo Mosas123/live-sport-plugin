@@ -43,37 +43,72 @@ const FASTMP4_CHUNK = 1 * 1024 * 1024;
 const FASTMP4_CONCURRENCY = 6;
 
 function parseClientRange(rangeHeader, total) {
-  // 'bytes=start-end' | 'bytes=start-' ; returns {start,end} or null
+  // One byte range: null ignores unsupported units/multipart; false rejects
+  // invalid or unsatisfiable byte ranges before response headers are committed.
   if (!rangeHeader) return null;
-  const m = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
-  if (!m) return null;
-  let [, s, e] = m;
-  let start = s === '' ? null : parseInt(s, 10);
-  let end = e === '' ? null : parseInt(e, 10);
-  if (start === null && end === null) return null;
-  if (start === null) { // suffix range: last N bytes
-    start = total != null ? Math.max(0, total - end) : 0;
-    end = total != null ? total - 1 : null;
+  const raw = String(rangeHeader).trim();
+  if (!/^bytes=/i.test(raw) || raw.includes(',')) return null;
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(raw);
+  if (!m || (!m[1] && !m[2])) return false;
+  if (!m[1]) {
+    const suffix = BigInt(m[2]);
+    if (suffix <= 0n) return false;
+    return { start: suffix >= BigInt(total) ? 0 : total - Number(suffix), end: total - 1 };
   }
-  if (Number.isNaN(start)) return null;
-  if (end != null && Number.isNaN(end)) end = null;
-  if (end != null && end < start) return null;
-  return { start, end };
+  const start = BigInt(m[1]);
+  const end = m[2] ? BigInt(m[2]) : BigInt(total - 1);
+  if (start >= BigInt(total) || end < start) return false;
+  return { start: Number(start), end: end >= BigInt(total) ? total - 1 : Number(end) };
 }
 
-async function fetchRangeBuf(url, start, end, headers, signal) {
+function parseContentRange(value) {
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(String(value || '').trim());
+  if (!match) return null;
+  const [start, end, total] = match.slice(1).map(Number);
+  if (![start, end, total].every(Number.isSafeInteger)
+      || total <= 0 || end < start || end >= total) return null;
+  return { start, end, total };
+}
+
+async function readRangeBuf(response, start, end, total) {
+  const range = parseContentRange(response.headers.get('content-range'));
+  const encoding = response.headers.get('content-encoding');
+  const expected = end - start + 1;
+  if (response.status !== 206 || !range || range.start !== start
+      || range.end !== end || (total != null && range.total !== total)
+      || (encoding && encoding.toLowerCase() !== 'identity')) {
+    try { await response.body?.cancel(); } catch (_) {}
+    throw new Error('invalid upstream range metadata');
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('missing upstream range body');
+  const chunks = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > expected) throw new Error('oversized upstream range body');
+      chunks.push(Buffer.from(value));
+    }
+    if (length !== expected) throw new Error('truncated upstream range body');
+    return Buffer.concat(chunks, length);
+  } catch (error) {
+    try { await reader.cancel(); } catch (_) {}
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function fetchRangeBuf(url, start, end, total, headers, signal) {
   try {
     const r = await fetch(url, {
       headers: { ...headers, Range: `bytes=${start}-${end}` },
       signal,
     });
-    if (r.status !== 206 && r.status !== 200) {
-      const err = new Error(`upstream ${r.status}`);
-      err.statusCode = r.status;
-      throw err;
-    }
-    const buf = Buffer.from(await r.arrayBuffer());
-    return buf;
+    return await readRangeBuf(r, start, end, total);
   } catch (e) {
     // On client disconnect we abort() the whole batch. Those rejections are
     // expected and already handled at the await site, but the not-yet-awaited
@@ -105,6 +140,7 @@ router.get('/api/fastmp4', async (req, res) => {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
     'Referer': referer,
     'Accept': '*/*',
+    'Accept-Encoding': 'identity',
   };
 
   // Probe with a 1-byte range to learn the real Content-Range/total length.
@@ -116,22 +152,24 @@ router.get('/api/fastmp4', async (req, res) => {
       signal: AbortSignal.timeout(15000),
     });
     if (probe.status !== 206 && probe.status !== 200) {
+      try { await probe.body?.cancel(); } catch (_) {}
       return res.status(probe.status === 400 ? 502 : probe.status).send('upstream refused');
     }
-    const cr = probe.headers.get('content-range');
-    if (cr) {
-      const m = /bytes\s+\d+-\d+\/(\d+|\*)/i.exec(cr);
-      if (m && m[1] !== '*') total = parseInt(m[1], 10);
-    }
+    const range = parseContentRange(probe.headers.get('content-range'));
+    await readRangeBuf(probe, 0, 0, null);
+    total = range.total;
     if (probe.headers.get('content-type')) contentType = probe.headers.get('content-type');
-    // drain the tiny body
-    try { await probe.arrayBuffer(); } catch (_) {}
   } catch (e) {
     console.error('[FastMP4] probe failed:', e.message);
     return res.status(502).send('upstream probe failed');
   }
 
-  const reqRange = parseClientRange(req.headers['range'], total);
+  const reqRange = req.method === 'HEAD' ? null : parseClientRange(req.headers['range'], total);
+  if (reqRange === false) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Range', `bytes */${total}`);
+    return res.status(416).end();
+  }
   const start = reqRange ? reqRange.start : 0;
   const end = reqRange && reqRange.end != null
     ? reqRange.end
@@ -169,7 +207,7 @@ router.get('/api/fastmp4', async (req, res) => {
     const e = end != null ? Math.min(s + chunkSize - 1, end) : (s + chunkSize - 1);
     nextOffset = e + 1;
     const seq = nextSeq++;
-    pending.set(seq, track(fetchRangeBuf(targetUrl, s, e, upstreamHeaders, ac.signal)));
+    pending.set(seq, track(fetchRangeBuf(targetUrl, s, e, total, upstreamHeaders, ac.signal)));
   };
 
   let aborted = false;
@@ -186,7 +224,7 @@ router.get('/api/fastmp4', async (req, res) => {
         pending.delete(serve);
         if (aborted || (e && e.__expected)) return; // client went away; normal
         console.error('[FastMP4] chunk failed:', e.message);
-        break; // stop; headers already sent
+        throw e;
       }
       pending.delete(serve);
       if (aborted) return;
@@ -206,8 +244,13 @@ router.get('/api/fastmp4', async (req, res) => {
   } catch (e) {
     if (aborted || (e && e.__expected)) return;
     console.error('[FastMP4] error:', e.message);
-    if (!res.headersSent) res.status(502).send('Proxy error');
-    else res.end();
+    if (!res.headersSent) {
+      res.removeHeader('Content-Length');
+      res.removeHeader('Content-Range');
+      res.status(502).type('text').send('Upstream range failed');
+    } else res.destroy(); // a truncated transfer must not look complete
+  } finally {
+    ac.abort(); // stop queued siblings after a failed window or completed response
   }
 });
 
