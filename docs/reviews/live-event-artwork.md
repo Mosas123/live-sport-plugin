@@ -16,10 +16,11 @@ The two singles use players/time from the supplied screenshot. Doubles pairings 
 
 ## Validation
 
-138 selected Jest tests pass:44 new composer/catalog/image-handler cases,13 existing match-card cases and81 guard/cache/retry controls. Catalog tests use a DI fixture; route tests evaluate the actual `/img/match` registration in isolation with the SVG fallback. They do not start the full app or prove HTTP/native playback integration.
+138 selected Jest tests pass:45 new composer/catalog/image-handler cases,12 existing match-card cases and81 guard/cache/retry controls. Catalog tests use a DI fixture; route tests evaluate the actual `/img/match` registration in isolation with the SVG fallback. They do not start the full app or prove HTTP/native playback integration.
 
 Four supplied sample SVGs parse successfully and sharp renders JPEG quality85 at800×450:28,941 /35,263 /34,825 /28,769 bytes, below the existing256KiB route budget. These are sample payloads, not a general benchmark or before/after bandwidth gain. The comparison PNG is a documentation asset only.
 
 Core patch applies to the exact heads of overlapping PRs #24/#25 (catalog.js) and #31 (index.js). This is an application check, not a merge or execution of all combined PRs. No pending branches were modified.
 
 Full suite, build/dist, CI, native providers, Nuvio/device playback and deployment remain untested. Review layout in the target client before merging.
+
