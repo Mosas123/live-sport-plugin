@@ -120,6 +120,51 @@ async function fetchRangeBuf(url, start, end, total, headers, signal) {
   }
 }
 
+// An origin may legitimately ignore Range and send the full representation.
+// Reuse that single response; never turn it into fabricated partial content.
+async function streamFullResponse(response, req, res, signal) {
+  const rawLength = response.headers.get('content-length');
+  const encoding = response.headers.get('content-encoding');
+  const length = rawLength == null ? null : Number(rawLength);
+  const contentType = response.headers.get('content-type') || 'video/mp4';
+  if (response.headers.has('content-range')
+      || (encoding && encoding.toLowerCase() !== 'identity')
+      || (rawLength != null && (!/^\d+$/.test(rawLength) || !Number.isSafeInteger(length)))
+      || (!response.body && length > 0)) {
+    try { await response.body?.cancel(); } catch (_) {}
+    throw new Error('invalid full-response metadata');
+  }
+  if (!/^(?:video\/[a-z0-9.+-]+|application\/octet-stream)(?:\s*;|$)/i.test(contentType)) {
+    try { await response.body?.cancel(); } catch (_) {}
+    throw new Error('unsupported full-response content type');
+  }
+  res.status(200);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Accept-Ranges', 'none');
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (length != null) res.setHeader('Content-Length', String(length));
+  if (req.method === 'HEAD') {
+    try { await response.body?.cancel(); } catch (_) {}
+    return res.end();
+  }
+  if (!response.body) return res.end();
+  const { Readable, Transform } = require('node:stream');
+  const { pipeline } = require('node:stream/promises');
+  let received = 0;
+  const checkLength = new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      if (length != null && received > length) return callback(new Error('oversized full response'));
+      callback(null, chunk);
+    },
+    flush(callback) {
+      callback(length != null && received !== length ? new Error('truncated full response') : null);
+    },
+  });
+  await pipeline(Readable.fromWeb(response.body), checkLength, res, { signal });
+}
+
 router.get('/api/fastmp4', async (req, res) => {
   const targetUrl = req.query.url;
   const referer = req.query.referer || 'https://ok.ru/';
@@ -146,11 +191,21 @@ router.get('/api/fastmp4', async (req, res) => {
   // Probe with a 1-byte range to learn the real Content-Range/total length.
   let total = null;
   let contentType = 'video/mp4';
+  const probeController = new AbortController();
+  const probeTimer = setTimeout(() => probeController.abort(), 15000);
+  const onProbeClose = () => { if (!res.writableFinished) probeController.abort(); };
+  res.once('close', onProbeClose);
   try {
     const probe = await fetch(targetUrl, {
       headers: { ...upstreamHeaders, Range: 'bytes=0-0' },
-      signal: AbortSignal.timeout(15000),
+      signal: probeController.signal,
     });
+    if (probe.status === 200) {
+      // The existing probe timeout must not become a 15-second video cutoff.
+      clearTimeout(probeTimer);
+      await streamFullResponse(probe, req, res, probeController.signal);
+      return;
+    }
     if (probe.status !== 206 && probe.status !== 200) {
       try { await probe.body?.cancel(); } catch (_) {}
       return res.status(probe.status === 400 ? 502 : probe.status).send('upstream refused');
@@ -161,7 +216,13 @@ router.get('/api/fastmp4', async (req, res) => {
     if (probe.headers.get('content-type')) contentType = probe.headers.get('content-type');
   } catch (e) {
     console.error('[FastMP4] probe failed:', e.message);
+    if (res.destroyed) return;
+    if (res.headersSent) return res.destroy();
+    res.removeHeader('Content-Length');
     return res.status(502).send('upstream probe failed');
+  } finally {
+    clearTimeout(probeTimer);
+    res.removeListener('close', onProbeClose);
   }
 
   const reqRange = req.method === 'HEAD' ? null : parseClientRange(req.headers['range'], total);

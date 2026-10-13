@@ -57,7 +57,6 @@ test('HEAD ignores Range and returns full length without fetching windows', asyn
   expect(r.chunks).toHaveLength(0); expect(global.fetch).toHaveBeenCalledTimes(1);
 });
 test.each([
-  ['ignored Range 200', 200, null, 'abcdefghij', undefined],
   ['missing Content-Range', 206, null, 'a', undefined],
   ['unknown total', 206, 'bytes 0-0/*', 'a', undefined],
   ['wrong probe offset', 206, 'bytes 1-1/10', 'b', undefined],

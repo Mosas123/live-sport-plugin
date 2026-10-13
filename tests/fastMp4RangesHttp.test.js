@@ -11,12 +11,28 @@ const originalConnect = net.Socket.prototype.connect, originalFetch = global.fet
 const small = Buffer.from('abcdefghij'), large = Buffer.alloc(700000);
 for (let i = 0; i < large.length; i++) large[i] = i % 251;
 const seen = [];
+const cancelled = new Set(), finishedBodies = new Set();
 let upstream, addon, base, addonBase, dispatcher;
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 beforeAll(async () => {
   upstream = http.createServer((req, res) => {
     seen.push({ path: req.url, range: req.headers.range, encoding: req.headers['accept-encoding'] });
-    const payload = req.url === '/large' || req.url === '/latebad' ? large : small;
+    const payload = ['/large', '/latebad', '/ignore-large'].includes(req.url) ? large : small;
+    if (req.url.startsWith('/ignore')) {
+      if (req.url === '/ignore-progress' || req.url === '/ignore-disconnect') {
+        res.writeHead(200, { 'content-type': 'video/mp4' }); res.flushHeaders(); res.write('first');
+        const timer = setTimeout(() => { finishedBodies.add(req.url); res.end('second'); }, req.url === '/ignore-progress' ? 120 : 1000);
+        res.once('close', () => { clearTimeout(timer); if (!res.writableFinished) cancelled.add(req.url); }); return;
+      }
+      const headers = { 'content-type': 'video/mp4' };
+      if (req.url === '/ignore-length' || req.url === '/ignore-short') headers['content-length'] = '10';
+      if (req.url === '/ignore-short') headers.connection = 'close';
+      if (req.url === '/ignore-empty') headers['content-length'] = '0';
+      if (req.url === '/ignore-range') headers['content-range'] = 'bytes 0-3/10';
+      if (req.url === '/ignore-encoded') headers['content-encoding'] = 'gzip';
+      if (req.url === '/ignore-html') headers['content-type'] = 'text/html';
+      res.writeHead(200, headers); res.end(req.url === '/ignore-empty' ? '' : req.url === '/ignore-short' ? 'abc' : payload); return;
+    }
     const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
     if (!match || req.url === '/ignore') { res.writeHead(200, { 'content-type': 'video/mp4' }); res.end(payload); return; }
     const start = Number(match[1]), requestedEnd = Number(match[2]);
@@ -77,7 +93,7 @@ test.each(['bytes=20-30', 'bytes=10-', 'bytes=-0'])('wire %s returns 416 with kn
   const r = await request(proxy('/good'), range); expect(r.status).toBe(416);
   expect(r.headers['content-range']).toBe('bytes */10'); expect(seen).toHaveLength(1);
 });
-test.each(['/ignore', '/badprobe', '/chunk200', '/wrongoffset', '/short', '/oversize'])('%s fails with 502 before video headers are committed', async path => {
+test.each(['/badprobe', '/chunk200', '/wrongoffset', '/short', '/oversize'])('%s fails with 502 before video headers are committed', async path => {
   const r = await request(proxy(path), 'bytes=0-3'); expect(r.status).toBe(502);
   expect(r.headers['content-range']).toBeUndefined(); expect(r.complete).toBe(true);
 });
@@ -106,4 +122,44 @@ test('watch page HTML still responds without upstream fetching', async () => {
 test('blocked URL guard still prevents the probe', async () => {
   guard.checkOutboundUrl.mockResolvedValue({ ok: false, reason: 'blocked_address' });
   const r = await request(proxy('/good')); expect(r.status).toBe(403); expect(seen).toHaveLength(0);
+});
+test.each(['/ignore', '/ignore-length', '/ignore-large'])('%s reuses one full 200 response without fabricating partial headers', async path => {
+  const r = await request(proxy(path), 'bytes=2-5'); expect(r.status).toBe(200);
+  expect(r.body).toEqual(path === '/ignore-large' ? large : small); expect(r.complete).toBe(true);
+  expect(r.headers['accept-ranges']).toBe('none'); expect(r.headers['content-range']).toBeUndefined();
+  if (path === '/ignore-length') expect(r.headers['content-length']).toBe('10');
+  else expect(r.headers['content-length']).toBeUndefined(); expect(seen).toHaveLength(1);
+});
+test('fallback HEAD retains known full length, sends no body and opens only one upstream request',async()=>{
+  const r=await request(proxy('/ignore-length'),'bytes=2-5','HEAD');expect(r.status).toBe(200);
+  expect(r.headers['content-length']).toBe('10');expect(r.body.length).toBe(0);expect(seen).toHaveLength(1);
+});
+test('empty ignored-Range representation is returned as a valid full 200',async()=>{
+  const r=await request(proxy('/ignore-empty'),'bytes=0-3');expect(r.status).toBe(200);
+  expect(r.headers['content-length']).toBe('0');expect(r.body.length).toBe(0);expect(r.complete).toBe(true);expect(seen).toHaveLength(1);
+});
+test.each(['/ignore-range','/ignore-encoded','/ignore-html'])('unsupported/contradictory full response %s still fails with 502',async path=>{
+  const r=await request(proxy(path),'bytes=2-5');expect(r.status).toBe(502);expect(seen).toHaveLength(1);
+});
+test('truncated full response stays visibly incomplete and is never refetched',async()=>{
+  const r=await request(proxy('/ignore-short'),'bytes=2-5');expect(r.status).toBe(200);
+  expect(r.complete).toBe(false);expect(r.error).toBeDefined();expect(r.body.length).toBeLessThan(10);expect(seen).toHaveLength(1);
+});
+test('fallback delivers first bytes before upstream finishes the full body',async()=>{
+  const result=await new Promise(resolve=>{
+    const req=http.get(addonBase+proxy('/ignore-progress'),{agent:false,headers:{Range:'bytes=2-5'}},res=>{
+      let early;const chunks=[];res.on('data',chunk=>{if(early===undefined)early=!finishedBodies.has('/ignore-progress');chunks.push(chunk);});
+      res.on('end',()=>resolve({status:res.statusCode,early,body:Buffer.concat(chunks).toString()}));res.on('error',error=>resolve({error}));
+    });req.on('error',error=>resolve({error}));req.setTimeout(2000,()=>req.destroy(new Error('fixture timeout')));
+  });
+  expect(result).toEqual({status:200,early:true,body:'firstsecond'});expect(seen).toHaveLength(1);
+});
+test('disconnect during fallback closes the reused real HTTP upstream',async()=>{
+  const status=await new Promise(resolve=>{
+    const req=http.get(addonBase+proxy('/ignore-disconnect'),{agent:false,headers:{Range:'bytes=2-5'}},res=>{
+      res.once('data',()=>{req.destroy();resolve(res.statusCode);});res.on('error',()=>{});
+    });req.on('error',()=>{});req.setTimeout(2000,()=>{req.destroy();resolve('fixture timeout');});
+  });
+  expect(status).toBe(200);const until=Date.now()+500;while(!cancelled.has('/ignore-disconnect')&&Date.now()<until)await new Promise(r=>setTimeout(r,5));
+  expect(cancelled.has('/ignore-disconnect')).toBe(true);expect(seen).toHaveLength(1);
 });
