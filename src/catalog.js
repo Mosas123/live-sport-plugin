@@ -1683,11 +1683,12 @@ async function handleMeta(type, id, config) {
   const effectiveType = type === 'series' ? 'series' : 'tv';
   const _hmCacheKey = _metaCacheKey(id, config, id.startsWith('nuvio_sport_replay_') ? 'series' : effectiveType);
   const _hmRevision = _metaCacheRevision();
+  // Fire-and-forget stale-while-revalidate, same as handleCatalog.
+  // Run this before the memoized return so cache hits still trigger freshness checks.
+  container.resolve('cronService').ensureFresh();
+
   const _hmCached = _metaCacheGet(_hmCacheKey, _hmRevision);
   if (_hmCached) return _hmCached;
-
-  // Fire-and-forget stale-while-revalidate, same as handleCatalog.
-  container.resolve('cronService').ensureFresh();
 
   // Individual match meta or Replay Hub meta
   if (!id.startsWith('nuvio_sport_')) {
