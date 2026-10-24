@@ -26,7 +26,8 @@ module.exports = {
         WARP_PROXY_URL: 'socks5://127.0.0.1:40000',
         // Cloudflare worker-budget counters live in process memory, so each
         // cluster instance must be told how many siblings share the same caps.
-        WORKER_INSTANCE_COUNT: '2'
+        WORKER_INSTANCE_COUNT: '2',
+        ENABLE_SPEED_PROBE: 'false'
       }
     }
   ]
