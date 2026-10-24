@@ -143,10 +143,12 @@ async function readLimitedBody(body, maxBytes) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value || value.byteLength === 0) continue;
-        const chunk = Buffer.from(value);
+        // Keep a view while inspecting the chunk; copy only the accepted prefix
+        // if one transport chunk is larger than the remaining budget.
+        const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
         const remaining = maxBytes - total;
         if (chunk.byteLength > remaining) {
-          if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+          if (remaining > 0) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
           total += Math.max(0, remaining);
           truncated = true;
           try { await reader.cancel(); } catch (_) {}
@@ -161,10 +163,12 @@ async function readLimitedBody(body, maxBytes) {
   } else if (body[Symbol.asyncIterator]) {
     for await (const value of body) {
       if (!value || value.byteLength === 0) continue;
-      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      const chunk = Buffer.isBuffer(value)
+        ? value
+        : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
       const remaining = maxBytes - total;
       if (chunk.byteLength > remaining) {
-        if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+        if (remaining > 0) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
         total += Math.max(0, remaining);
         truncated = true;
         if (typeof body.destroy === 'function') {
