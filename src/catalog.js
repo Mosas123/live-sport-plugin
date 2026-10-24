@@ -1717,7 +1717,8 @@ async function handleMeta(type, id, config) {
   //   - setImmediate defers the work one event-loop tick so the meta JSON is
   //     fully flushed to the socket before stream-token minting begins.
   try {
-    if (isMatchLive(match) && match.category !== 'networks' && !isReplayMatch(match)) {
+    const prewarmEnabled = Number(process.env.PREWARM_MAX_MATCHES !== undefined ? process.env.PREWARM_MAX_MATCHES : 12) > 0;
+    if (prewarmEnabled && isMatchLive(match) && match.category !== 'networks' && !isReplayMatch(match)) {
       setImmediate(() => prewarmMatch(match, config || {}, Number.MAX_SAFE_INTEGER).catch(() => {}));
     }
   } catch (_) {}

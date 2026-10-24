@@ -7,6 +7,11 @@ const { parseLanguagePriority, compareStreams } = require('./services/LanguagePr
 const { BASE_URL } = require('./config');
 const { performance } = require('perf_hooks');
 const SkTechCrypto = require('./resolver/sktech/SkTechCrypto');
+const StreamResolveCache = require('./services/StreamResolveCache');
+
+function resolveKey(src, matchId) {
+  return StreamResolveCache.resolveKey(src, matchId);
+}
 
 // Source selection (shared by handleStream and prewarmMatch)
 function detectChannelCountry(channelName) {
@@ -794,8 +799,7 @@ async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts 
     for (let i = 0; i < targets.length; i += BATCH_SIZE) {
       const batch = targets.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(batch.map(async (src) => {
-        const subKey = src.streamSource ? `:${src.streamSource}${src.streamId ? ':' + src.streamId : ''}` : '';
-        const key = `${src.source}:${match.id}:${src.id}${subKey}`;
+        const key = resolveKey(src, match.id);
         if (resolveCache.get(key)) return null;
         return resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, config || null, key, options));
       }));
@@ -1053,8 +1057,7 @@ async function handleStream(type, id, config) {
 
   const inFlight = [];        // per-source promise + settled result for the fallback wait
   const races = activeSources.map((src) => {
-    const subKey = src.streamSource ? `:${src.streamSource}${src.streamId ? ':' + src.streamId : ''}` : '';
-    const key = `${src.source}:${matchId}:${src.id}${subKey}`;
+    const key = resolveKey(src, matchId);
     const isPriority1 = src.source === 'daddylive' || SOURCE_PRIORITY[src.source] === 1;
     const state = { key, source: src.source, isPriority1, promise: null, settled: false, value: [] };
     const promise = resolveCache
@@ -1585,6 +1588,7 @@ function suppressPreMatchTeamChannels(streams, match) {
 module.exports = {
   handleStream,
   prewarmMatch,
+  resolveKey,
   prewarmSkipProvidersSet,
   selectSources,
   // Exported so the manifest proxy can transparently re-mint a single expired
