@@ -12,7 +12,7 @@ module.exports = {
         MALLOC_ARENA_MAX: '2',
         MALLOC_CONF: 'narenas:2,dirty_decay_ms:5000,muzzy_decay_ms:5000',
         LD_PRELOAD: '/usr/lib/x86_64-linux-gnu/libjemalloc.so.2',
-        UV_THREADPOOL_SIZE: '64',
+        UV_THREADPOOL_SIZE: '16',
         // The impit native client (Rust) holds pools, TLS sessions and per-host
         // buffers that are never released, and it exposes no close() API; it was
         // measured at ~250 MB/h per instance. Three instances now exist (main,

@@ -34,9 +34,7 @@ function getImpit() {
   if (_impitInstance && Date.now() - _impitBornAt > IMPIT_RECYCLE_MS) {
     console.log('[impitClient] recycling impit instance (native memory hygiene)');
     _impitInstance = undefined;
-    if (typeof global.gc === 'function') {
-      try { global.gc(); } catch (_) {}
-    }
+    // global.gc omitted during active traffic to prevent SIGBUS/SIGSEGV race
   }
   if (_impitInstance !== undefined) return _impitInstance;
   try {
@@ -60,9 +58,7 @@ function getProxyImpit(proxyUrl) {
   if (_impitProxyInstance && (_impitProxyUrl !== proxyUrl || Date.now() - _impitProxyBornAt > IMPIT_RECYCLE_MS)) {
     console.log('[impitClient] recycling proxy impit instance');
     _impitProxyInstance = undefined;
-    if (typeof global.gc === 'function') {
-      try { global.gc(); } catch (_) {}
-    }
+    // global.gc omitted during active traffic to prevent SIGBUS/SIGSEGV race
   }
   if (_impitProxyInstance !== undefined) return _impitProxyInstance;
   try {
@@ -85,9 +81,7 @@ function getVanillaImpit() {
   if (_impitVanillaInstance && Date.now() - _impitVanillaBornAt > IMPIT_RECYCLE_MS) {
     console.log('[impitClient] recycling vanilla impit instance');
     _impitVanillaInstance = undefined;
-    if (typeof global.gc === 'function') {
-      try { global.gc(); } catch (_) {}
-    }
+    // global.gc omitted during active traffic to prevent SIGBUS/SIGSEGV race
   }
   if (_impitVanillaInstance !== undefined) return _impitVanillaInstance;
   try {
@@ -197,7 +191,41 @@ async function readLimitedBody(body, maxBytes) {
  *   backoff is ~17s inside a call the caller believes is bounded by timeoutMs.
  * @returns {{ ok, status, bodyTruncated: boolean, text: () => string, json: () => object }}
  */
+// -- Dead-host blocklist -------------------------------------------------------
+// Hosts confirmed dead in production: prewarm / verify / re-mint fetched them
+// on every cycle and they can never answer.
+const DEAD_HOSTS = new Set([
+  'welovetocare.shop',
+  'ksohls.ru',
+]);
+for (const extra of String(process.env.DEAD_HOSTS || '').split(',')) {
+  const host = extra.trim().toLowerCase();
+  if (host) DEAD_HOSTS.add(host);
+}
+
+function isDeadHost(url) {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    const parts = host.split('.');
+    for (let i = 0; i < parts.length; i++) {
+      const candidate = parts.slice(i).join('.');
+      if (DEAD_HOSTS.has(candidate)) return candidate;
+    }
+  } catch (_) {}
+  return null;
+}
+
 async function safeFetch(url, opts = {}) {
+  const deadMatch = isDeadHost(url);
+  if (deadMatch) {
+    return {
+      ok: false,
+      status: 410,
+      text: async () => '',
+      json: async () => ({})
+    };
+  }
   const { signal, timeoutMs = 15000, attempts = 3 } = opts;
   // Method, headers and body are reassigned per redirect hop on the undici path
   // (see the redirect loop below), so they cannot be destructured as const.

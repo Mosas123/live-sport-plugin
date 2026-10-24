@@ -329,7 +329,14 @@ async function entryToDataUri(entry) {
 // Memoized composed match cards: an identical query set skips both the badge
 // fetch and the base64 re-encode. Bounded so a hostile query space cannot grow
 // it without limit.
+try {
+  const sharp = require('sharp');
+  sharp.concurrency(1);
+  sharp.cache({ memory: 16, files: 0, items: 20 });
+} catch (_) {}
+
 const matchCardMemo = new Map();
+const matchCardInFlight = new Map();
 const MATCH_CARD_MEMO_MAX = 120;
 
 // Stremio's documented poster budget is 100 kb (50 kb recommended). Generated
@@ -446,6 +453,33 @@ app.get(['/img/match', '/:config/img/match'], async (req, res) => {
     }
     return res.send(cached);
   }
+
+  if (matchCardInFlight.has(memoKey)) {
+    try {
+      const inflightResult = await matchCardInFlight.get(memoKey);
+      if (inflightResult) {
+        if (Buffer.isBuffer(inflightResult)) {
+          res.setHeader('Content-Type', 'image/jpeg');
+        } else {
+          res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+        }
+        return res.send(inflightResult);
+      }
+    } catch (_) {}
+  }
+
+  let resolveInflight;
+  const inFlightPromise = new Promise((resolve) => { resolveInflight = resolve; });
+  matchCardInFlight.set(memoKey, inFlightPromise);
+  const finishInflight = (data) => {
+    if (resolveInflight) {
+      resolveInflight(data);
+      resolveInflight = null;
+      matchCardInFlight.delete(memoKey);
+    }
+  };
+  res.on('finish', () => finishInflight(null));
+  res.on('close', () => finishInflight(null));
 
   // Resolve each badge and inline its bytes as a data URI. A dead crest is
   // omitted (so the card falls back to its plate / monogram) and the card stays
@@ -664,23 +698,31 @@ app.get(['/img/match', '/:config/img/match'], async (req, res) => {
   const hasArtwork = !!(badgesToUse.badge1 || badgesToUse.badge2 || badgesToUse.leagueBadge || badgesToUse.channelBadge || badgesToUse.channelMark);
   const memoWorthy = droppedForSize || !hasNameSlot || hasArtwork;
 
-  if (matchCardMemo.size >= MATCH_CARD_MEMO_MAX) matchCardMemo.clear();
+  while (matchCardMemo.size >= MATCH_CARD_MEMO_MAX) {
+    const oldest = matchCardMemo.keys().next().value;
+    if (!oldest) break;
+    matchCardMemo.delete(oldest);
+  }
 
   if (memoWorthy) {
     if (jpeg) {
       matchCardMemo.set(memoKey, jpeg);
+      finishInflight(jpeg);
       res.setHeader('Content-Type', 'image/jpeg');
       return res.send(jpeg);
     }
     matchCardMemo.set(memoKey, svg);
+    finishInflight(svg);
     res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
     return res.send(svg);
   }
 
   if (jpeg) {
+    finishInflight(jpeg);
     res.setHeader('Content-Type', 'image/jpeg');
     return res.send(jpeg);
   }
+  finishInflight(svg);
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
   return res.send(svg);
 });
