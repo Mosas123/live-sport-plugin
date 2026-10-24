@@ -123,17 +123,79 @@ const _undiciAgent = new Agent({
 // redirect loop costs about what a single timed-out request costs.
 const MAX_REDIRECT_HOPS = 5;
 
+/**
+ * Read at most maxBytes from a Fetch-style or Undici response body.
+ * The caller can distinguish a complete body from a prefix sample.
+ */
+async function readLimitedBody(body, maxBytes) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new TypeError('maxBytes must be a positive safe integer');
+  }
+  if (!body) return { buffer: Buffer.alloc(0), truncated: false };
+  const chunks = [];
+  let total = 0;
+  let truncated = false;
+
+  if (typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        // Keep a view while inspecting the chunk; copy only the accepted prefix
+        // if one transport chunk is larger than the remaining budget.
+        const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+        const remaining = maxBytes - total;
+        if (chunk.byteLength > remaining) {
+          if (remaining > 0) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
+          total += Math.max(0, remaining);
+          truncated = true;
+          try { await reader.cancel(); } catch (_) {}
+          break;
+        }
+        chunks.push(chunk);
+        total += chunk.byteLength;
+      }
+    } finally {
+      try { reader.releaseLock(); } catch (_) {}
+    }
+  } else if (body[Symbol.asyncIterator]) {
+    for await (const value of body) {
+      if (!value || value.byteLength === 0) continue;
+      const chunk = Buffer.isBuffer(value)
+        ? value
+        : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      const remaining = maxBytes - total;
+      if (chunk.byteLength > remaining) {
+        if (remaining > 0) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
+        total += Math.max(0, remaining);
+        truncated = true;
+        if (typeof body.destroy === 'function') {
+          try { body.destroy(); } catch (_) {}
+        }
+        break;
+      }
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+  } else {
+    throw new TypeError('Response body is not a readable stream');
+  }
+  return { buffer: Buffer.concat(chunks, total), truncated };
+}
+
 // -- Core helper --------------------------------------------------------------
 /**
  * safeFetch - fetches a URL using impit when available, falls back to undici.
  *
  * @param {string} url
- * @param {object} opts   - { method, headers, body, signal, timeoutMs, attempts, proxyUrl }
+ * @param {object} opts   - { method, headers, body, signal, timeoutMs, attempts, proxyUrl, maxBodyBytes }
  *   attempts: how many times to try the impit path before falling back to
  *   undici (default 3). Callers that run their own retry policy should pass 1,
  *   so the two layers do not multiply: three impit tries at a 5s timeout plus
  *   backoff is ~17s inside a call the caller believes is bounded by timeoutMs.
- * @returns {{ ok, status, text: () => string, json: () => object }}
+ * @returns {{ ok, status, bodyTruncated: boolean, text: () => string, json: () => object }}
  */
 async function safeFetch(url, opts = {}) {
   const { signal, timeoutMs = 15000, attempts = 3 } = opts;
@@ -187,7 +249,9 @@ async function safeFetch(url, opts = {}) {
             timer = setTimeout(() => rej(new Error(`impit timeout ${timeoutMs}ms`)), timeoutMs);
           }),
         ]);
-        const buf = await res.arrayBuffer();
+        const { buffer: buf, truncated: bodyTruncated } = Number.isSafeInteger(opts.maxBodyBytes) && opts.maxBodyBytes > 0
+          ? await readLimitedBody(res.body, opts.maxBodyBytes)
+          : { buffer: await res.arrayBuffer(), truncated: false };
         if (res.status === 400 && url.includes('ok.ru')) {
            throw new Error('ok.ru blocked impit');
         }
@@ -204,9 +268,10 @@ async function safeFetch(url, opts = {}) {
             ok: false,
             status: res.status,
             headers: res.headers,
+            bodyTruncated,
             text: async () => Buffer.from(buf).toString('utf8'),
             json: async () => JSON.parse(Buffer.from(buf).toString('utf8')),
-            arrayBuffer: async () => buf,
+            arrayBuffer: async () => Buffer.isBuffer(buf) ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) : buf,
           };
           if (proxyUrl) {
             // Proxied requests must never fall back to undici (which bypasses proxy)
@@ -223,9 +288,10 @@ async function safeFetch(url, opts = {}) {
           ok: res.status >= 200 && res.status < 300,
           status: res.status,
           headers: res.headers,
+          bodyTruncated,
           text: async () => Buffer.from(buf).toString('utf8'),
           json: async () => JSON.parse(Buffer.from(buf).toString('utf8')),
-          arrayBuffer: async () => buf,
+          arrayBuffer: async () => Buffer.isBuffer(buf) ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) : buf,
         };
       } catch (impitErr) {
         lastErr = impitErr;
@@ -319,14 +385,17 @@ async function safeFetch(url, opts = {}) {
     }
     currentUrl = nextUrl.toString();
   }
-  const buf = await res.body.arrayBuffer();
+  const { buffer: buf, truncated: bodyTruncated } = Number.isSafeInteger(opts.maxBodyBytes) && opts.maxBodyBytes > 0
+    ? await readLimitedBody(res.body, opts.maxBodyBytes)
+    : { buffer: await res.body.arrayBuffer(), truncated: false };
   return {
     ok: res.statusCode >= 200 && res.statusCode < 300,
     status: res.statusCode,
     headers: res.headers,
+    bodyTruncated,
     text: async () => Buffer.from(buf).toString('utf8'),
     json: async () => JSON.parse(Buffer.from(buf).toString('utf8')),
-    arrayBuffer: async () => buf,
+    arrayBuffer: async () => Buffer.isBuffer(buf) ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) : buf,
   };
   };
 
@@ -340,4 +409,4 @@ function isImpitAvailable() {
   return getImpit() !== null;
 }
 
-module.exports = { safeFetch, isImpitAvailable, getImpit, isDamitvTarget, isDembedTarget };
+module.exports = { safeFetch, isImpitAvailable, getImpit, isDamitvTarget, isDembedTarget, readLimitedBody };

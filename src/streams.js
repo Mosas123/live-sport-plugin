@@ -58,6 +58,8 @@ const SOURCE_PRIORITY = {
   streamsports: 13
 };
 
+const VERIFY_BODY_MAX_BYTES = 64 * 1024;
+
 const KNOWN_REPLAY_SOURCES = ['replayzone', 'livetv', 'soccerfull', 'basketballvideo', 'nflvideo', 'fullraces', 'hockeyreplays', 'mlblive'];
 const KNOWN_LIVE_SOURCES = ['ppvst', 'daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'embedindia', 'embedst', 'streamedpk', 'damitv', 'sktech', 'vavoo', 'ak47live'];
 const KNOWN_FALLBACKS = ['ppvst', 'daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'embedindia', 'embedst', 'streamedpk', 'replayzone', 'livetv', 'damitv', 'soccerfull', 'basketballvideo', 'nflvideo', 'fullraces', 'hockeyreplays', 'mlblive', 'sktech', 'vavoo', 'ak47live'];
@@ -575,6 +577,7 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
 
       let res;
       let bodySample = '';
+      let bodyTruncated = false;
 
       const isMp4 = targetUrl.includes('.mp4') || targetUrl.includes('type=4') || (targetUrl.includes('okcdn.ru') && !targetUrl.includes('.m3u8'));
 
@@ -609,8 +612,10 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
                 signal: attemptController.signal,
                 timeoutMs: VERIFY_TIMEOUT_MS,
                 attempts: 1,
+                // Verification only needs a manifest prefix, not an arbitrarily large body.
+                maxBodyBytes: VERIFY_BODY_MAX_BYTES,
               });
-              return { status: r.status, body: await r.text() };
+              return { status: r.status, body: await r.text(), bodyTruncated: r.bodyTruncated === true };
             } finally {
               clearTimeout(attemptTimer);
             }
@@ -628,6 +633,7 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
         );
         res = { status: result.status };
         bodySample = result.body;
+        bodyTruncated = result.bodyTruncated === true;
       } catch (fetchErr) {
         const kind = isTransientError(fetchErr) ? 'unreachable after retries' : 'hard error';
         console.log(`[Filter] Dropped stream (${kind}): ${targetUrl} - ${fetchErr.message}`);
@@ -666,9 +672,11 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
               headers: retryHeaders,
               timeoutMs: VERIFY_TIMEOUT_MS,
               attempts: 1,
+              maxBodyBytes: VERIFY_BODY_MAX_BYTES,
             });
             res = { status: r2.status };
             bodySample = await r2.text();
+            bodyTruncated = r2.bodyTruncated === true;
             if (res.status === 200) referer = guess; // so a later noteFailure/keep decision is accurate
           }
         } catch (_) { /* fall through to the dead-stream handling below */ }
@@ -693,7 +701,7 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
       // Some CDNs (like lb8.strmd.st) return 200 OK with "Not found" when token is expired.
       // If it doesn't contain #EXT or <MPD (for DASH manifests), it's not a valid playlist.
       const isMpd = targetUrl.includes('.mpd') || bodySample.includes('<MPD') || bodySample.includes('<mpd');
-      if (!isMpd && !isMp4 && !bodySample.includes('#EXT')) {
+      if (!isMpd && !isMp4 && !bodySample.includes('#EXT') && !bodyTruncated) {
         console.log(`[Filter] Dropped fake 200 stream (Invalid M3U8 body): ${targetUrl}`);
         if (cacheKey) resolveCache.noteFailure(cacheKey);
         return null;
@@ -715,7 +723,7 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
           if (parsedQuality.bitrateTag) s.bitrate = parsedQuality.bitrateTag;
         }
 
-        if (ENABLE_SPEED_PROBE && !opts.skipSpeedProbe) {
+        if (ENABLE_SPEED_PROBE && !opts.skipSpeedProbe && !bodyTruncated) {
           await measureStreamSpeed(s, targetUrl, bodySample, referer, origin, m3u8Parser, verifyDeadlineAt);
         }
       }
