@@ -792,7 +792,53 @@ function prewarmSkipProvidersSet() {
   return new Set(raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
 }
 
-async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts = { skipSpeedProbe: true }) {
+// Background prewarming is best-effort work: bound it per worker and drop excess
+// requests rather than allowing an unbounded backlog to compete with playback.
+// Interactive handleStream resolution does not use this scheduler.
+function positiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+const MAX_ACTIVE_PREWARM_MATCHES = positiveIntegerEnv('PREWARM_MAX_CONCURRENT_MATCHES', 2);
+const MAX_QUEUED_PREWARM_MATCHES = positiveIntegerEnv('PREWARM_MAX_QUEUED_MATCHES', 2);
+let activePrewarmMatches = 0;
+const queuedPrewarmMatches = [];
+
+function runScheduledPrewarm(entry) {
+  activePrewarmMatches++;
+  Promise.resolve()
+    .then(entry.task)
+    .then(entry.resolve, (err) => {
+      console.warn('[Prewarm] scheduled task failed:', err && err.message ? err.message : err);
+      entry.resolve();
+    })
+    .finally(() => {
+      activePrewarmMatches--;
+      const next = queuedPrewarmMatches.shift();
+      if (next) runScheduledPrewarm(next);
+    });
+}
+
+function schedulePrewarm(task) {
+  return new Promise((resolve) => {
+    const entry = { task, resolve };
+    if (activePrewarmMatches < MAX_ACTIVE_PREWARM_MATCHES) {
+      runScheduledPrewarm(entry);
+      return;
+    }
+    if (queuedPrewarmMatches.length < MAX_QUEUED_PREWARM_MATCHES) {
+      queuedPrewarmMatches.push(entry);
+      return;
+    }
+    // Never accumulate an unbounded backlog. The next metadata miss or cron
+    // pass can request prewarming again; interactive resolution remains intact.
+    console.info('[Prewarm] skipped: worker prewarm queue is full');
+    resolve();
+  });
+}
+
+async function prewarmMatchNow(match, config, topN = Number.MAX_SAFE_INTEGER, opts = { skipSpeedProbe: true }) {
   try {
     if (!match || !match.sources || !match.sources.length) return;
     const resolveCache = container.resolve('streamResolveCache');
@@ -815,6 +861,12 @@ async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts 
   } catch (err) {
     console.warn('[Prewarm] failed:', err.message);
   }
+}
+
+
+async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts = { skipSpeedProbe: true }) {
+  if (!match || !match.sources || !match.sources.length) return;
+  return schedulePrewarm(() => prewarmMatchNow(match, config, topN, opts));
 }
 
 
