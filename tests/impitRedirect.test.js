@@ -181,3 +181,33 @@ describe('impitClient.safeFetch — outbound URL validation on every redirect ho
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe('safeFetch guarded redirects strip cross-origin credentials', () => {
+  test('removes authorization, cookies, and Host before requesting another origin', async () => {
+    request
+      .mockResolvedValueOnce(redirectResponse(302, 'https://mirror.example/live.m3u8'))
+      .mockResolvedValueOnce(bodyResponse(200, PLAYLIST));
+    const validateRedirect = jest.fn(async url => ({ ok: true, url, addresses: ['93.184.216.34'] }));
+
+    const res = await safeFetch('https://primary.example/live.m3u8', {
+      attempts: 1,
+      validateRedirect,
+      headers: {
+        Authorization: 'Bearer secret',
+        Cookie: 'session=secret',
+        Cookie2: 'legacy=secret',
+        'Proxy-Authorization': 'Basic secret',
+        Host: 'primary.example',
+        'User-Agent': 'test-agent',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const redirectedHeaders = request.mock.calls[1][1].headers;
+    for (const key of ['authorization', 'cookie', 'cookie2', 'proxy-authorization', 'host']) {
+      expect(Object.keys(redirectedHeaders).some(k => k.toLowerCase() === key)).toBe(false);
+    }
+    expect(redirectedHeaders['User-Agent']).toBe('test-agent');
+  });
+});
