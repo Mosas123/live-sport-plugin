@@ -1,6 +1,7 @@
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
+const ChannelIdentityService = require('../services/ChannelIdentityService');
 const { BASE_URL } = require('../config');
 
 // Rolling-window channels (NFL Network, Sky Sports Golf, ...) republish a
@@ -141,9 +142,26 @@ class DamiTvProvider extends BaseProvider {
             if (seenSanitizedIds.has(sanitized)) return;
             seenSanitizedIds.add(sanitized);
 
-            matches.push(new MatchEntity({
+            const ident = ChannelIdentityService.parseChannel(s.name, { group: s.league });
+            const canonicalTitle = ident.canonicalTitle;
+            const enrichedSources = sources.map(src => ({
+              ...src,
+              channelName: s.name,
+              canonicalChannel: canonicalTitle,
+              country: ident.country || '',
+              countryCode: ident.countryCode || '',
+              countryFlag: ident.countryFlag || '',
+              language: ident.language || '',
+              resolution: ident.resolution || '',
+              isBackup: ident.isBackup || false,
+              isTimeshift: ident.isTimeshift || false,
+              type: 'channel'
+            }));
+
+            const entity = new MatchEntity({
               id: `dami_${sanitized}`,
-              title: s.name,
+              title: canonicalTitle,
+              baseTitle: canonicalTitle,
               category: 'networks',
               date: '0',
               popular: '1',
@@ -151,8 +169,12 @@ class DamiTvProvider extends BaseProvider {
               league: 'Live TV',
               thumbnail_url: s.poster ? (s.poster.startsWith('//') ? 'https:' + s.poster : s.poster) : '',
               poster: s.poster ? (s.poster.startsWith('//') ? 'https:' + s.poster : s.poster) : '',
-              sources: sources
-            }));
+              sources: enrichedSources
+            });
+            entity.channelIdentityKey = ident.identityKey;
+            entity.channelNumber = ident.channelNumber;
+            entity.canonicalTitle = canonicalTitle;
+            matches.push(entity);
             return;
           }
 
@@ -231,19 +253,40 @@ class DamiTvProvider extends BaseProvider {
           }
 
           seenSanitizedIds.add(this._sanitizeId(item.id));
-          matches.push(new MatchEntity({
+          const ident = ChannelIdentityService.parseChannel(item.title);
+          const canonicalTitle = ident.canonicalTitle;
+          const enrichedSources = sources.map(src => ({
+            ...src,
+            channelName: item.title,
+            canonicalChannel: canonicalTitle,
+            country: ident.country || '',
+            countryCode: ident.countryCode || '',
+            countryFlag: ident.countryFlag || '',
+            language: ident.language || '',
+            resolution: ident.resolution || '',
+            isBackup: ident.isBackup || false,
+            isTimeshift: ident.isTimeshift || false,
+            type: 'channel'
+          }));
+
+          const entity = new MatchEntity({
             id: `dami_${this._sanitizeId(item.id)}`,
             title: item.title,
+            baseTitle: item.title,
             category: 'networks',
-            date: '0',
+            date: '',
             popular: '1',
             status: '',
             league: 'Live TV',
             thumbnail_url: '',
             poster: '',
             logo: '',
-            sources: sources
-          }));
+            sources: enrichedSources
+          });
+          entity.channelIdentityKey = ident.identityKey;
+          entity.channelNumber = ident.channelNumber;
+          entity.canonicalTitle = canonicalTitle;
+          matches.push(entity);
         }
       }
     } catch (error) {
@@ -282,28 +325,48 @@ class DamiTvProvider extends BaseProvider {
         console.warn(`[${this.name}] API extraction failed for ${matchId}, falling back to embed chain...`);
       }
 
+      const UA_CHROME131 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
       const referer = 'https://damitv.st/';
       const origin = 'https://damitv.st';
-      const proxy = (upstream) => `${BASE_URL}/api/manifest?url=${encodeURIComponent(upstream)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
+      const proxy = (upstream) => `${BASE_URL}/api/manifest?url=${encodeURIComponent(upstream)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}&ua=${encodeURIComponent(UA_CHROME131)}`;
+      const proxyHeaders = {
+        request: {
+          'Referer': referer,
+          'Origin': origin,
+          'User-Agent': UA_CHROME131
+        }
+      };
 
       if (extractData && extractData.success) {
         if (extractData.hlsUrl) {
-          streams.push(new StreamEntity({
+          const isTikTokStream = Boolean(/streamed\/admin|strmd\.st|\.image|tiktokcdn|byteoversea/i.test(extractData.hlsUrl));
+          const s = new StreamEntity({
             name: this.name,
             title: matchTitle,
             url: proxy(extractData.hlsUrl),
-            behaviorHints: { notWebReady: true },
+            behaviorHints: { notWebReady: true, proxyHeaders },
             resolution: 'HD'
-          }));
+          });
+          if (isTikTokStream) {
+            s.isTikTok = true;
+            s._isTikTok = true;
+          }
+          streams.push(s);
         }
         if (extractData.sdUrl) {
-          streams.push(new StreamEntity({
+          const isTikTokStream = Boolean(/streamed\/admin|strmd\.st|\.image|tiktokcdn|byteoversea/i.test(extractData.sdUrl));
+          const s = new StreamEntity({
             name: this.name,
             title: matchTitle,
             url: proxy(extractData.sdUrl),
-            behaviorHints: { notWebReady: true },
+            behaviorHints: { notWebReady: true, proxyHeaders },
             resolution: 'SD'
-          }));
+          });
+          if (isTikTokStream) {
+            s.isTikTok = true;
+            s._isTikTok = true;
+          }
+          streams.push(s);
         }
       }
 
@@ -312,7 +375,7 @@ class DamiTvProvider extends BaseProvider {
         try {
           const msRes = await this.proxyFetch('https://damitv.st/data/manual-sources.json?t=' + Date.now(), {
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+              'User-Agent': UA_CHROME131,
               'Referer': 'https://damitv.st/'
             },
             timeoutMs: 5000
@@ -326,7 +389,7 @@ class DamiTvProvider extends BaseProvider {
                         name: this.name,
                         title: matchTitle,
                         url: proxy(st.url),
-                        behaviorHints: { notWebReady: true },
+                        behaviorHints: { notWebReady: true, proxyHeaders },
                         resolution: 'HD'
                       }));
                    }

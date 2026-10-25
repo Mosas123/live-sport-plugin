@@ -1,0 +1,302 @@
+{
+  "timestamp": "2026-10-19T14:11:21.512Z",
+  "catalogs": {
+    "Live Now": {
+      "remote": {
+        "count": 100,
+        "elapsed": 1067,
+        "ok": true
+      },
+      "local": {
+        "count": 100,
+        "elapsed": 545,
+        "ok": true
+      }
+    },
+    "24/7 TV Channels": {
+      "remote": {
+        "count": 100,
+        "elapsed": 813,
+        "ok": true
+      },
+      "local": {
+        "count": 100,
+        "elapsed": 255,
+        "ok": true
+      }
+    },
+    "Upcoming Fixtures": {
+      "remote": {
+        "count": 100,
+        "elapsed": 793,
+        "ok": true
+      },
+      "local": {
+        "count": 100,
+        "elapsed": 311,
+        "ok": true
+      }
+    },
+    "Soccer / Football": {
+      "remote": {
+        "count": 100,
+        "elapsed": 812,
+        "ok": true
+      },
+      "local": {
+        "count": 100,
+        "elapsed": 132,
+        "ok": true
+      }
+    },
+    "Cricket": {
+      "remote": {
+        "count": 24,
+        "elapsed": 946,
+        "ok": true
+      },
+      "local": {
+        "count": 18,
+        "elapsed": 125,
+        "ok": true
+      }
+    },
+    "Tennis": {
+      "remote": {
+        "count": 56,
+        "elapsed": 763,
+        "ok": true
+      },
+      "local": {
+        "count": 54,
+        "elapsed": 172,
+        "ok": true
+      }
+    },
+    "Motorsport": {
+      "remote": {
+        "count": 78,
+        "elapsed": 826,
+        "ok": true
+      },
+      "local": {
+        "count": 66,
+        "elapsed": 290,
+        "ok": true
+      }
+    },
+    "Basketball": {
+      "remote": {
+        "count": 34,
+        "elapsed": 817,
+        "ok": true
+      },
+      "local": {
+        "count": 29,
+        "elapsed": 195,
+        "ok": true
+      }
+    },
+    "Other Sports": {
+      "remote": {
+        "count": 52,
+        "elapsed": 808,
+        "ok": true
+      },
+      "local": {
+        "count": 47,
+        "elapsed": 380,
+        "ok": true
+      }
+    }
+  },
+  "astroCricket": {
+    "remoteCards": [
+      {
+        "id": "nuvio_sport_cdn_ch_us_astro-cricket",
+        "name": "📺 Astro Cricket"
+      },
+      {
+        "id": "nuvio_sport_sktech_ch_sktech_ch_cust_27_75",
+        "name": "📺 Astro Cricket"
+      },
+      {
+        "id": "nuvio_sport_vavoo_ch_astro-cricket-united-kingdom",
+        "name": "📺 ASTRO CRICKET (United Kingdom)"
+      }
+    ],
+    "localCards": [
+      {
+        "id": "nuvio_sport_cdn_ch_us_astro-cricket",
+        "name": "📺 Astro Cricket"
+      }
+    ]
+  },
+  "channelDeduplication": {
+    "Cartoonito": {
+      "remoteCount": 8,
+      "localCount": 1,
+      "remoteCards": [
+        "📺 CARTOONITO (France)",
+        "📺 CARTOONITO (Germany)",
+        "📺 CARTOONITO (Italy)",
+        "📺 CARTOONITO (Netherlands)",
+        "📺 CARTOONITO (Poland)",
+        "📺 CARTOONITO (Portugal)",
+        "📺 CARTOONITO (Turkey)",
+        "📺 CARTOONITO (United Kingdom)"
+      ],
+      "localCards": [
+        "📺 Cartoonito"
+      ]
+    },
+    "Sky Sports Premier League": {
+      "remoteCount": 2,
+      "localCount": 1,
+      "remoteCards": [
+        "📺 Sky sports Premier League",
+        "📺 SKY SPORTS PREMIER LEAGUE (United Kingdom)"
+      ],
+      "localCards": [
+        "📺 Sky Sports Premier League"
+      ]
+    },
+    "TNT Sports 1": {
+      "remoteCount": 3,
+      "localCount": 1,
+      "remoteCards": [
+        "📺 TNT Sports 1",
+        "📺 TNT Sports 1 UK",
+        "📺 TNT SPORTS 1 (United Kingdom)"
+      ],
+      "localCards": [
+        "📺 TNT Sports 1"
+      ]
+    }
+  },
+  "daddyLiveFixtures": {
+    "live": {
+      "local": 35,
+      "remote": 41
+    },
+    "upcoming": {
+      "local": 40,
+      "remote": 40
+    }
+  },
+  "streamComparison": [
+    {
+      "target": "Astro Cricket",
+      "localId": "nuvio_sport_cdn_ch_us_astro-cricket",
+      "remoteId": "nuvio_sport_cdn_ch_us_astro-cricket",
+      "remote": {
+        "count": 3,
+        "elapsed": 262,
+        "samples": [
+          {
+            "name": "🧿 Support Us",
+            "title": "❤️ Help keep servers & streams alive\nTap to open Donation Center (Ko-fi / Crypto)"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 DaddyLive | 📺 Astro Cricket 🇲🇾 [MY • English]\n📺 Quality: SD · 1.6 Mbps\n⏱ Fast"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 CDNLiveTV | 📺 Astro Cricket 🇲🇾 [MY • English]\n📺 Quality: HD"
+          }
+        ]
+      },
+      "local": {
+        "count": 3,
+        "elapsed": 11053,
+        "samples": [
+          {
+            "name": "🧿 Support Us",
+            "title": "❤️ Help keep servers & streams alive\nTap to open Donation Center (Ko-fi / Crypto)"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 CDNLiveTV | 📺 Astro Cricket 🇲🇾 [MY • English]\n📺 Quality: HD"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 DaddyLive | 📺 Astro Cricket 🇲🇾 [MY • English]\n📺 Quality: SD · 1.6 Mbps\n⏱ Fast"
+          }
+        ]
+      }
+    },
+    {
+      "target": "ABC USA",
+      "localId": "nuvio_sport_dlv_ch_51_abc-usa",
+      "remoteId": "nuvio_sport_dlv_ch_51_abc-usa",
+      "remote": {
+        "count": 2,
+        "elapsed": 2256,
+        "samples": [
+          {
+            "name": "🧿 Support Us",
+            "title": "❤️ Help keep servers & streams alive\nTap to open Donation Center (Ko-fi / Crypto)"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 DaddyLive | 📺 ABC USA 🇺🇸 [US • English]\n📺 Quality: 720p · 2.5 Mbps\n⏱ Fast"
+          }
+        ]
+      },
+      "local": {
+        "count": 0,
+        "elapsed": 15008,
+        "samples": []
+      }
+    },
+    {
+      "target": "Live Fixture: 🔴 LIVE: Manisa FK vs Muglaspor",
+      "localId": "nuvio_sport_ak47_manisa_fk_vs_muglaspor",
+      "remoteId": "nuvio_sport_ak47_manisa_fk_vs_muglaspor",
+      "remote": {
+        "count": 2,
+        "elapsed": 1067,
+        "samples": [
+          {
+            "name": "🧿 Support Us",
+            "title": "❤️ Help keep servers & streams alive\nTap to open Donation Center (Ko-fi / Crypto)"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 SKTech | 📺 TEST ⓵\n📺 Quality: 1080p · 8.6 Mbps"
+          }
+        ]
+      },
+      "local": {
+        "count": 0,
+        "elapsed": 3374,
+        "samples": []
+      }
+    },
+    {
+      "target": "Live Fixture: 🔴 LIVE: El Gouna vs Smouha",
+      "localId": "nuvio_sport_ak47_el_gouna_vs_smouha",
+      "remoteId": "nuvio_sport_ak47_el_gouna_vs_smouha",
+      "remote": {
+        "count": 2,
+        "elapsed": 430,
+        "samples": [
+          {
+            "name": "🧿 Support Us",
+            "title": "❤️ Help keep servers & streams alive\nTap to open Donation Center (Ko-fi / Crypto)"
+          },
+          {
+            "name": "⚡ Direct Stream",
+            "title": "📺 SKTech | 📺 TEST ⓵\n📺 Quality: 1080p · 8.6 Mbps"
+          }
+        ]
+      },
+      "local": {
+        "count": 0,
+        "elapsed": 4,
+        "samples": []
+      }
+    }
+  ]
+}

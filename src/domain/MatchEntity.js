@@ -10,7 +10,8 @@ function toMillis(value) {
 }
 
 class MatchEntity {
-  constructor({ id, title, category, date, timestamp, status, popular, sources, league, team1, team2, thumbnail_url, poster, logo, background, score }) {
+  constructor(data = {}) {
+    const { id, title, category, date, timestamp, status, popular, sources, league, team1, team2, thumbnail_url, poster, logo, background, score, ...rest } = data;
     this.id = id || '';
     this.title = title || 'Unknown Match';
     this.category = category || 'other';
@@ -34,6 +35,9 @@ class MatchEntity {
     this.poster = poster || '';
     this.logo = logo || '';
     this.background = background || '';
+
+    // Preserve custom entity fields (e.g. channel identity, canonical titles, aliasIds)
+    Object.assign(this, rest);
   }
 }
 

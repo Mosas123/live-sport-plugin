@@ -1,6 +1,7 @@
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
+const ChannelIdentityService = require('../services/ChannelIdentityService');
 const { parseTimezone } = require('../timezone');
 
 const CHANNEL_PREFIX = 'ch:';
@@ -149,20 +150,44 @@ class CdnLiveProvider extends BaseProvider {
 
       return picked.map(c => {
         const title = String(c.name).trim();
-        const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
         const region = regionFromCode(c.code);
+        const ident = ChannelIdentityService.parseChannel(title, {
+          group: region,
+          country: region
+        });
+        const canonicalTitle = ident.canonicalTitle;
+        const identityKey = ident.identityKey;
+        const channelNumber = ident.channelNumber;
+        const slug = canonicalTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-        return new MatchEntity({
+        const entity = new MatchEntity({
           id: `cdn_ch_${c.code || 'xx'}_${slug}`,
-          title,
+          title: canonicalTitle,
           region: region || undefined,
-          baseTitle: title,
+          baseTitle: canonicalTitle,
           category: 'networks',
           date: '0',
           popular: '1',
-          league: 'Live TV',
-          sources: [{ source: 'cdnlive', id: CHANNEL_PREFIX + c.url }]
+          league: ident.country || region || 'Live TV',
+          sources: [{
+            source: 'cdnlive',
+            id: CHANNEL_PREFIX + c.url,
+            channelName: title,
+            canonicalChannel: canonicalTitle,
+            country: ident.country || region || '',
+            countryCode: ident.countryCode || (c.code ? String(c.code).toUpperCase() : ''),
+            countryFlag: ident.countryFlag || '',
+            language: ident.language || '',
+            resolution: ident.resolution || '',
+            isBackup: ident.isBackup || false,
+            isTimeshift: ident.isTimeshift || false,
+            type: 'channel'
+          }]
         });
+        entity.channelIdentityKey = identityKey;
+        entity.channelNumber = channelNumber;
+        entity.canonicalTitle = canonicalTitle;
+        return entity;
       });
     } catch (err) {
       console.error(`[${this.name}] Failed to get channels:`, err.message);
@@ -269,19 +294,20 @@ class CdnLiveProvider extends BaseProvider {
           let playerRes = await safeFetch(url, fetchOpts);
 
           if (playerRes.status === 429 || playerRes.status === 403) {
-            const { CF_IMAGE_WORKER_POOL } = require('../services/HlsRewriteService');
-            if (CF_IMAGE_WORKER_POOL && CF_IMAGE_WORKER_POOL.length > 0) {
-              // Shuffle and pick up to 3 workers to try in case some are exhausted
-              const workersToTry = [...CF_IMAGE_WORKER_POOL].sort(() => Math.random() - 0.5).slice(0, 3);
-              for (const cfProxy of workersToTry) {
-                const edgeUrl = `${cfProxy}/?action=cdnlive&playerUrl=${encodeURIComponent(url)}`;
-                playerRes = await safeFetch(edgeUrl, {
-                  headersTimeout: 10000,
-                  bodyTimeout: 10000,
-                  signal: AbortSignal.timeout(8000)
-                });
-                if (playerRes.ok) break;
-              }
+            const { workerPool } = require('../services/HlsRewriteService');
+            const tried = new Set();
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const a = workerPool.pick(null, { exclude: tried });
+              if (!a || a.tier === 'paid') break;
+              tried.add(a.url);
+
+              const edgeUrl = `${a.url}/?action=cdnlive&playerUrl=${encodeURIComponent(url)}`;
+              playerRes = await safeFetch(edgeUrl, {
+                headersTimeout: 10000,
+                bodyTimeout: 10000,
+                signal: AbortSignal.timeout(8000)
+              });
+              if (playerRes.ok) break;
             }
           }
 
@@ -388,7 +414,7 @@ class CdnLiveProvider extends BaseProvider {
         title: `CDNLiveTV (${name})`,
         url: m3u8Url,
         behaviorHints: {
-          notWebReady: true,
+          notWebReady: false,
           proxyHeaders: {
             request: {
               'Origin': 'https://cdnlivetv.tv',

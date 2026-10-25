@@ -1,0 +1,279 @@
+[
+  {
+    "item": "TNT Sports 1",
+    "query": "TNT Sports 1",
+    "remoteCardsCount": 3,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 TNT Sports 1",
+      "📺 TNT Sports 1 UK",
+      "📺 TNT SPORTS 1 (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 TNT Sports 1"
+    ],
+    "remoteStreamCount": 1,
+    "localStreamCount": 0,
+    "remoteLatencyMs": 1752,
+    "localLatencyMs": 15017,
+    "remoteSampleStreams": [
+      "📺 CDNLiveTV | 📺 TNT Sports 1 🇬🇧 [UK • English] [📺 Quality: HD]"
+    ],
+    "localSampleStreams": []
+  },
+  {
+    "item": "TNT 1 (multi-token search)",
+    "query": "TNT 1",
+    "remoteCardsCount": 0,
+    "localCardsCount": 3,
+    "remoteCards": [],
+    "localCards": [
+      "📺 TNT Sports 1",
+      "📺 Medi 1 TNT",
+      "📺 Nat 1 TNT"
+    ],
+    "remoteStreamCount": 0,
+    "localStreamCount": 3,
+    "remoteLatencyMs": 0,
+    "localLatencyMs": 3323,
+    "remoteSampleStreams": [],
+    "localSampleStreams": [
+      "📺 Vavoo | 📺 TNT SPORT 1 — United Kingdom [📺 Quality: 1080p]",
+      "📺 DaddyLive | 📺 TNT Sports 1 UK 🇬🇧 [UK • English] [📺 Quality: 720p · 2.3 Mbps]",
+      "📺 CDNLiveTV | 📺 TNT Sports 1 🇬🇧 [UK • English] [📺 Quality: HD]"
+    ]
+  },
+  {
+    "item": "TNT Sports 2",
+    "query": "TNT Sports 2",
+    "remoteCardsCount": 3,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 TNT Sports 2",
+      "📺 TNT Sports 2 UK",
+      "📺 TNT SPORTS 2 (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 TNT Sports 2"
+    ],
+    "remoteStreamCount": 1,
+    "localStreamCount": 1,
+    "remoteLatencyMs": 276,
+    "localLatencyMs": 6421,
+    "remoteSampleStreams": [
+      "📺 CDNLiveTV | 📺 TNT Sports 2 🇬🇧 [UK • English] [📺 Quality: HD]"
+    ],
+    "localSampleStreams": [
+      "📺 DaddyLive | 📺 TNT Sports 2 UK 🇬🇧 [UK • English] [📺 Quality: SD · 1.1 Mbps]"
+    ]
+  },
+  {
+    "item": "TNT Sports 4",
+    "query": "TNT Sports 4",
+    "remoteCardsCount": 2,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 TNT Sports 4 UK",
+      "📺 TNT SPORTS 4 (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 TNT Sports 4"
+    ],
+    "remoteStreamCount": 1,
+    "localStreamCount": 3,
+    "remoteLatencyMs": 2042,
+    "localLatencyMs": 6454,
+    "remoteSampleStreams": [
+      "📺 DaddyLive | 📺 TNT Sports 4 UK 🇬🇧 [UK • English] [📺 Quality: 720p · 2.3 Mbps]"
+    ],
+    "localSampleStreams": [
+      "📺 Vavoo | 📺 TNT SPORTS 4 — United Kingdom 🇬🇧 [UK • English] [📺 Quality: 1080p]",
+      "📺 DaddyLive | 📺 TNT Sports 4 UK 🇬🇧 [UK • English] [📺 Quality: 720p · 2.3 Mbps]",
+      "📺 CDNLiveTV | 📺 TNT Sports 4 🇬🇧 [UK • English] [📺 Quality: HD]"
+    ]
+  },
+  {
+    "item": "Sky Sports F1 (motorsport safety)",
+    "query": "Sky Sports F1",
+    "remoteCardsCount": 6,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 Sky Sports F1",
+      "📺 Sky Sports F1 UK",
+      "📺 Sky Sports F1 DE",
+      "📺 SKY SPORTS F1 (Germany)",
+      "📺 SKY SPORTS F1 (Italy)",
+      "📺 SKY SPORTS F1 (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 Sky Sports F1"
+    ],
+    "remoteStreamCount": 1,
+    "localStreamCount": 6,
+    "remoteLatencyMs": 255,
+    "localLatencyMs": 6024,
+    "remoteSampleStreams": [
+      "📺 CDNLiveTV | 📺 Sky Sports F1 🇬🇧 [UK • English] [📺 Quality: HD]"
+    ],
+    "localSampleStreams": [
+      "📺 DaddyLive | 📺 Sky Sports F1 UK 🇬🇧 [UK • English] [📺 Quality: 1080p60 · 6.6 Mbps]",
+      "📺 CDNLiveTV | 📺 Sky Sports F1 🇬🇧 [UK • English] [📺 Quality: HD]",
+      "📺 Vavoo | 📺 SKY SPORT F1 — Germany 🇩🇪 [DE • German] [📺 Quality: 1080p]",
+      "📺 Vavoo | 📺 SKY SPORT F1 — Italy 🇮🇹 [IT • Italian] [📺 Quality: 1080p]"
+    ]
+  },
+  {
+    "item": "Astro Cricket",
+    "query": "Astro Cricket",
+    "remoteCardsCount": 3,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 Astro Cricket",
+      "📺 Astro Cricket",
+      "📺 ASTRO CRICKET (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 Astro Cricket"
+    ],
+    "remoteStreamCount": 2,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 1359,
+    "localLatencyMs": 6013,
+    "remoteSampleStreams": [
+      "📺 DaddyLive | 📺 Astro Cricket 🇲🇾 [MY • English] [📺 Quality: SD · 1.5 Mbps]",
+      "📺 CDNLiveTV | 📺 Astro Cricket 🇲🇾 [MY • English] [📺 Quality: HD]"
+    ],
+    "localSampleStreams": [
+      "📺 DaddyLive | 📺 Astro Cricket 🇲🇾 [MY • English] [📺 Quality: HD]",
+      "📺 CDNLiveTV | 📺 Astro Cricket 🇲🇾 [MY • English] [📺 Quality: HD]"
+    ]
+  },
+  {
+    "item": "Cartoonito",
+    "query": "Cartoonito",
+    "remoteCardsCount": 8,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 CARTOONITO (France)",
+      "📺 CARTOONITO (Germany)",
+      "📺 CARTOONITO (Italy)",
+      "📺 CARTOONITO (Netherlands)",
+      "📺 CARTOONITO (Poland)",
+      "📺 CARTOONITO (Portugal)",
+      "📺 CARTOONITO (Turkey)",
+      "📺 CARTOONITO (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 Cartoonito"
+    ],
+    "remoteStreamCount": 0,
+    "localStreamCount": 0,
+    "remoteLatencyMs": 6224,
+    "localLatencyMs": 6879,
+    "remoteSampleStreams": [],
+    "localSampleStreams": []
+  },
+  {
+    "item": "Willow Cricket",
+    "query": "Willow Cricket",
+    "remoteCardsCount": 2,
+    "localCardsCount": 2,
+    "remoteCards": [
+      "📺 Willow Cricket",
+      "📺 WILLOW CRICKET (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 Willow Cricket",
+      "📺 Willow 2 Cricket"
+    ],
+    "remoteStreamCount": 12,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 4653,
+    "localLatencyMs": 6078,
+    "remoteSampleStreams": [
+      "📺 DaddyLive | 📺 Willow Cricket 🇮🇳 [IN • English] [📺 Quality: 720p · 2.8 Mbps]",
+      "📺 DaddyLive | 📺 Willow 2 Cricket 🇮🇳 [IN • English] [📺 Quality: 720p · 2.6 Mbps]",
+      "📺 Streamed.pk [Admin] | 📺 Willow 2 🇮🇳 [IN • English] [📺 Quality: 1080p · 8.0 Mbps]"
+    ],
+    "localSampleStreams": [
+      "📺 DaddyLive | 📺 Willow Cricket 🇮🇳 [IN • English] [📺 Quality: 720p · 2.7 Mbps]",
+      "📺 CDNLiveTV | 📺 Willow Cricket 🇮🇳 [IN • English] [📺 Quality: HD]"
+    ]
+  },
+  {
+    "item": "Eurosport 1",
+    "query": "Eurosport 1",
+    "remoteCardsCount": 26,
+    "localCardsCount": 11,
+    "remoteCards": [
+      "📺 EuroSport 1 Greece",
+      "📺 EuroSport 1 Poland",
+      "📺 Eurosport 1 SW",
+      "📺 Eurosport 1 NL",
+      "📺 EuroSport 1 Spain",
+      "📺 EuroSport 1 Italy",
+      "📺 Eurosport 1 France",
+      "📺 Eurosport 1 HD",
+      "📺 Eurosport 1",
+      "📺 4K TR: EUROSPORT 1 HD",
+      "📺 EUROSPORT 1 (Albania)",
+      "📺 EUROSPORT 1 (Balkans)",
+      "📺 EUROSPORT 1 (Bulgaria)",
+      "📺 EUROSPORT 1 (France)",
+      "📺 DAZN EUROSPORT 1 HD (Germany)",
+      "📺 EUROSPORT 1 (Germany)",
+      "📺 EUROSPORT 1 DEUTSCHLAND (Germany)",
+      "📺 EUROSPORT 1 RAW (Germany)",
+      "📺 EUROSPORT 1 (Italy)",
+      "📺 EUROSPORT 1 (Netherlands)",
+      "📺 EUROSPORT 1 (Poland)",
+      "📺 EUROSPORT 1 (Portugal)",
+      "📺 EUROSPORT 1 HD (Romania)",
+      "📺 EUROSPORT 1 (Spain)",
+      "📺 EUROSPORT 1 (Turkey)",
+      "📺 EUROSPORT 1 (United Kingdom)"
+    ],
+    "localCards": [
+      "📺 Eurosport 1",
+      "📺 Eurosport 1 Greece",
+      "📺 Eurosport 1 Sw",
+      "📺 Eurosport 360 1",
+      "📺 DAZN Eurosport 1",
+      "📺 Eurosport 360 10",
+      "📺 Eurosport 360 11",
+      "📺 Eurosport 360 12",
+      "📺 Eurosport 360 13",
+      "📺 Eurosport 360 14",
+      "📺 Eurosport 360 15"
+    ],
+    "remoteStreamCount": 0,
+    "localStreamCount": 11,
+    "remoteLatencyMs": 1256,
+    "localLatencyMs": 6002,
+    "remoteSampleStreams": [],
+    "localSampleStreams": [
+      "📺 SKTech | 📺 TEST ⓵ 🇪🇺 [EU • English] [📺 Quality: 1080p · 7.1 Mbps]",
+      "📺 SKTech | 📺 TEST (VPN 🇪🇺 [EU • English] [📺 Quality: 1080p · 2.0 Mbps]",
+      "📺 CDNLiveTV | 📺 Eurosport 1 🇪🇺 [EU • English] [📺 Quality: HD]",
+      "📺 Vavoo | 📺 EUROSPORT 1 FHD — France 🇫🇷 [FR • French] [📺 Quality: 1080p]"
+    ]
+  },
+  {
+    "item": "Canal+ MotoGP",
+    "query": "Canal+ MotoGP",
+    "remoteCardsCount": 1,
+    "localCardsCount": 1,
+    "remoteCards": [
+      "📺 Canal+ MotoGP France"
+    ],
+    "localCards": [
+      "📺 Canal+ MotoGP"
+    ],
+    "remoteStreamCount": 0,
+    "localStreamCount": 0,
+    "remoteLatencyMs": 1274,
+    "localLatencyMs": 5395,
+    "remoteSampleStreams": [],
+    "localSampleStreams": []
+  }
+]

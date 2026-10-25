@@ -198,9 +198,11 @@ const LOWER_DIVISION_MARKERS = [
  * from this map simply keeps the previous behaviour.
  */
 const SPORT_SECONDARY_MARKERS = {
-  // Below the NHL: AHL/ECHL are the pro minors, OHL/QMJHL/WHL/USHL/NAHL junior.
+  // Below the NHL: AHL/ECHL are the pro minors, OHL/QMJHL/WHL/USHL/NAHL junior,
+  // and foreign secondary/junior leagues (MHL, VHL, KHL, DEL, Extraliga, Liiga, SHL).
   hockey: [
-    /\bahl\b/, /\bechl\b/, /\bohl\b/, /\bqmjhl\b/, /\bwhl\b/, /\bushl\b/, /\bnahl\b/
+    /\bahl\b/, /\bechl\b/, /\bohl\b/, /\bqmjhl\b/, /\bwhl\b/, /\bushl\b/, /\bnahl\b/,
+    /\bmhl\b/, /\bvhl\b/, /\bkhl\b/, /\bextraliga\b/, /\bextraleague\b/, /\bdel\b/, /\bdel2\b/, /\bliiga\b/, /\bshl\b/, /\bebel\b/, /\bicehl\b/
   ],
   // Below MLB: affiliated minor-league ball.
   baseball: [
@@ -296,10 +298,13 @@ function buildHaystack(match) {
  * Explicit demotion signal, independent of any mainstream signal.
  * True when the event names a lower division, a reserve/youth side or a
  * regional competition.
+ *
+ * The caller may pass the pre-built haystack so getMatchTier/explainMatch,
+ * which already folded the same fields, do not pay buildHaystack a second time.
  */
-function isLowerDivisionFixture(match) {
+function isLowerDivisionFixture(match, haystack) {
   if (!match || typeof match !== 'object') return false;
-  const haystack = buildHaystack(match);
+  if (haystack === undefined) haystack = buildHaystack(match);
   if (!haystack) return false;
 
   // Reserve / youth / academy sides are never the mainstream fixture.
@@ -352,7 +357,7 @@ function getMatchTier(match) {
   if (!match || typeof match !== 'object') return TIER.NEUTRAL;
 
   const haystack = buildHaystack(match);
-  if (haystack && isLowerDivisionFixture(match)) return TIER.MINOR;
+  if (haystack && isLowerDivisionFixture(match, haystack)) return TIER.MINOR;
 
   if (hasMainstreamSource(match)) return TIER.MAINSTREAM;
   if (matchesAny(TOP_TIER_COMPETITIONS, haystack)) return TIER.MAINSTREAM;
@@ -366,7 +371,7 @@ function getMatchTier(match) {
 function explainMatch(match) {
   if (!match || typeof match !== 'object') return 'not-a-match';
   const haystack = buildHaystack(match);
-  if (haystack && isLowerDivisionFixture(match)) return 'lower-division-marker';
+  if (haystack && isLowerDivisionFixture(match, haystack)) return 'lower-division-marker';
   if (hasMainstreamSource(match)) return 'mainstream-source';
   if (matchesAny(TOP_TIER_COMPETITIONS, haystack)) return 'top-tier-competition';
   if (haystack && FAMOUS_CLUB_PATTERN.test(haystack)) return 'famous-club';

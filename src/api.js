@@ -12,7 +12,7 @@ function normalizeCategory(cat) {
   if (cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1')) return 'motorsport';
   if (cat.includes('americanfootball') || cat.includes('afl') || cat.includes('gridiron') || cat.includes('nfl')) return 'american_football';
   if (cat.includes('fight') || cat.includes('mma') || cat.includes('boxing') || cat.includes('wrestling') || cat.includes('knuckle') || cat.includes('ufc')) return 'mma';
-  if (cat.includes('basketball') || cat.includes('nba')) return 'basketball';
+  if (cat.includes('basketball') || cat.includes('nba') || cat.includes('wnba') || cat.includes('euroleague') || cat.includes('eurocup') || cat.includes('fiba')) return 'basketball';
   if (cat.includes('golf')) return 'golf';
   if (cat.includes('rugby')) return 'rugby';
   if (cat.includes('cricket')) return 'cricket';

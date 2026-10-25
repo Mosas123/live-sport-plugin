@@ -97,30 +97,69 @@ const { generateCollections } = require('./collections');
 // static manifest (see the note in the /manifest.json handler) so the manifest
 // stays under the Stremio SDK's 8192-byte limit.
 const REPLAY_MANIFEST_ROWS = [
+  // Football
+  { type: 'tv', id: 'nuvio_sports_replays_football_today', name: "📅 Today's Replays", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_football_yesterday', name: "📅 Yesterday's Replays", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_football_this_week', name: "📅 This Week's Replays", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_football_older', name: "📅 Older Replays", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_football_premier_league', name: "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_football_ucl', name: "⭐ Champions League", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_football_recent', name: "🔥 Recent Replays", extra: [{ name: 'skip', isRequired: true }] },
+
+  // Motorsport
+  { type: 'tv', id: 'nuvio_sports_replays_motorsport_today', name: "📅 Today's Races", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_motorsport_yesterday', name: "📅 Yesterday's Races", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_motorsport_this_week', name: "📅 This Week's Races", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_motorsport_older', name: "📅 Older Races", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_motorsport_f1', name: "🏎️ Formula 1", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_motorsport_recent', name: "🔥 Recent Motorsport", extra: [{ name: 'skip', isRequired: true }] },
+
+  // Baseball
+  { type: 'tv', id: 'nuvio_sports_replays_baseball_today', name: "📅 Today's Games", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_baseball_yesterday', name: "📅 Yesterday's Games", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_baseball_this_week', name: "📅 This Week's Games", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_baseball_older', name: "📅 Older Games", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_baseball_mlb', name: "⚾ MLB", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_baseball_recent', name: "🔥 Recent Baseball", extra: [{ name: 'skip', isRequired: true }] },
+
+  // Rugby
+  { type: 'tv', id: 'nuvio_sports_replays_rugby_today', name: "📅 Today's Matches", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_rugby_yesterday', name: "📅 Yesterday's Matches", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_rugby_this_week', name: "📅 This Week's Matches", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_rugby_older', name: "📅 Older Matches", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_rugby_recent', name: "🔥 Recent Rugby", extra: [{ name: 'skip', isRequired: true }] },
+
   // Basketball
   { type: 'tv', id: 'nuvio_sports_replays_basketball_today', name: "\uD83D\uDCC5 Today's Games", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_basketball_yesterday', name: "\uD83D\uDCC5 Yesterday's Games", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_basketball_this_week', name: "\uD83D\uDCC5 This Week's Games", extra: [{ name: 'skip', isRequired: true }] },
-  { type: 'tv', id: 'nuvio_sports_replays_basketball_nba', name: '\uD83C\uDFC0 NBA', extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_basketball_older', name: '\uD83D\uDCC5 Older Games', extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_basketball_nba', name: '\uD83C\uDFC0 NBA', extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_basketball_recent', name: "🔥 Recent Basketball", extra: [{ name: 'skip', isRequired: true }] },
+
   // Tennis
   { type: 'tv', id: 'nuvio_sports_replays_tennis_today', name: "\uD83D\uDCC5 Today's Matches", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_tennis_yesterday', name: "\uD83D\uDCC5 Yesterday's Matches", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_tennis_this_week', name: "\uD83D\uDCC5 This Week's Matches", extra: [{ name: 'skip', isRequired: true }] },
-  { type: 'tv', id: 'nuvio_sports_replays_tennis_atp', name: '\uD83C\uDFBE ATP Tour', extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_tennis_older', name: '\uD83D\uDCC5 Older Matches', extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_tennis_atp', name: '\uD83C\uDFBE ATP Tour', extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_tennis_recent', name: "🔥 Recent Tennis", extra: [{ name: 'skip', isRequired: true }] },
+
   // Hockey
   { type: 'tv', id: 'nuvio_sports_replays_hockey_today', name: "\uD83D\uDCC5 Today's Games", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_hockey_yesterday', name: "\uD83D\uDCC5 Yesterday's Games", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_hockey_this_week', name: "\uD83D\uDCC5 This Week's Games", extra: [{ name: 'skip', isRequired: true }] },
-  { type: 'tv', id: 'nuvio_sports_replays_hockey_nhl', name: '\uD83C\uDFD2 NHL', extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_hockey_older', name: '\uD83D\uDCC5 Older Games', extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_hockey_nhl', name: '\uD83C\uDFD2 NHL', extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_hockey_recent', name: "🔥 Recent Hockey", extra: [{ name: 'skip', isRequired: true }] },
+
   // American Football
   { type: 'tv', id: 'nuvio_sports_replays_american_football_today', name: "\uD83D\uDCC5 Today's Games", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_american_football_yesterday', name: "\uD83D\uDCC5 Yesterday's Games", extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_american_football_this_week', name: "\uD83D\uDCC5 This Week's Games", extra: [{ name: 'skip', isRequired: true }] },
+  { type: 'tv', id: 'nuvio_sports_replays_american_football_older', name: '\uD83D\uDCC5 Older Games', extra: [{ name: 'skip', isRequired: true }] },
   { type: 'tv', id: 'nuvio_sports_replays_american_football_nfl', name: '\uD83C\uDFC8 NFL', extra: [{ name: 'skip', isRequired: true }] },
-  { type: 'tv', id: 'nuvio_sports_replays_american_football_older', name: '\uD83D\uDCC5 Older Games', extra: [{ name: 'skip', isRequired: true }] }
+  { type: 'tv', id: 'nuvio_sports_replays_american_football_recent', name: "🔥 Recent NFL", extra: [{ name: 'skip', isRequired: true }] }
 ];
 
 app.get(['/collections.json', '/nuvio-collections.json', '/:config/collections.json', '/:config/nuvio-collections.json'], (req, res) => {
@@ -213,6 +252,32 @@ app.get('/api/options', (req, res) => {
   });
 });
 
+app.get('/api/provider-health', (req, res) => {
+  const providerHealth = container.resolve('providerHealthService').snapshot();
+  let circuitBreakers = {};
+  try {
+    circuitBreakers = container.resolve('circuitBreaker').getStatus() || {};
+  } catch (_) {}
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    generatedAt: new Date().toISOString(),
+    ...providerHealth,
+    circuitBreakers,
+  });
+});
+
+app.get('/api/worker-budget', (req, res) => {
+  const expectedToken = process.env.WORKER_BUDGET_TOKEN;
+  if (expectedToken && req.query.token !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized', reason: 'invalid_token' });
+  }
+
+  const { workerPool } = require('./services/HlsRewriteService');
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(workerPool.snapshot());
+});
+
 app.get('/api/matches', (req, res) => {
   // Internal/debug surface: the configure page does not use it, but local helper
   // scripts do. Restrict to a direct local caller instead of removing it.
@@ -264,7 +329,14 @@ async function entryToDataUri(entry) {
 // Memoized composed match cards: an identical query set skips both the badge
 // fetch and the base64 re-encode. Bounded so a hostile query space cannot grow
 // it without limit.
+try {
+  const sharp = require('sharp');
+  sharp.concurrency(1);
+  sharp.cache({ memory: 16, files: 0, items: 20 });
+} catch (_) {}
+
 const matchCardMemo = new Map();
+const matchCardInFlight = new Map();
 const MATCH_CARD_MEMO_MAX = 120;
 
 // Stremio's documented poster budget is 100 kb (50 kb recommended). Generated
@@ -381,6 +453,33 @@ app.get(['/img/match', '/:config/img/match'], async (req, res) => {
     }
     return res.send(cached);
   }
+
+  if (matchCardInFlight.has(memoKey)) {
+    try {
+      const inflightResult = await matchCardInFlight.get(memoKey);
+      if (inflightResult) {
+        if (Buffer.isBuffer(inflightResult)) {
+          res.setHeader('Content-Type', 'image/jpeg');
+        } else {
+          res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+        }
+        return res.send(inflightResult);
+      }
+    } catch (_) {}
+  }
+
+  let resolveInflight;
+  const inFlightPromise = new Promise((resolve) => { resolveInflight = resolve; });
+  matchCardInFlight.set(memoKey, inFlightPromise);
+  const finishInflight = (data) => {
+    if (resolveInflight) {
+      resolveInflight(data);
+      resolveInflight = null;
+      matchCardInFlight.delete(memoKey);
+    }
+  };
+  res.on('finish', () => finishInflight(null));
+  res.on('close', () => finishInflight(null));
 
   // Resolve each badge and inline its bytes as a data URI. A dead crest is
   // omitted (so the card falls back to its plate / monogram) and the card stays
@@ -599,23 +698,31 @@ app.get(['/img/match', '/:config/img/match'], async (req, res) => {
   const hasArtwork = !!(badgesToUse.badge1 || badgesToUse.badge2 || badgesToUse.leagueBadge || badgesToUse.channelBadge || badgesToUse.channelMark);
   const memoWorthy = droppedForSize || !hasNameSlot || hasArtwork;
 
-  if (matchCardMemo.size >= MATCH_CARD_MEMO_MAX) matchCardMemo.clear();
+  while (matchCardMemo.size >= MATCH_CARD_MEMO_MAX) {
+    const oldest = matchCardMemo.keys().next().value;
+    if (!oldest) break;
+    matchCardMemo.delete(oldest);
+  }
 
   if (memoWorthy) {
     if (jpeg) {
       matchCardMemo.set(memoKey, jpeg);
+      finishInflight(jpeg);
       res.setHeader('Content-Type', 'image/jpeg');
       return res.send(jpeg);
     }
     matchCardMemo.set(memoKey, svg);
+    finishInflight(svg);
     res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
     return res.send(svg);
   }
 
   if (jpeg) {
+    finishInflight(jpeg);
     res.setHeader('Content-Type', 'image/jpeg');
     return res.send(jpeg);
   }
+  finishInflight(svg);
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
   return res.send(svg);
 });
@@ -667,7 +774,8 @@ app.get('/img', async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
   const entry = await imageService.getImage(req.query.url);
-  if (entry) {
+  const isValidEntry = entry && (entry.width == null || entry.width > 2) && (entry.height == null || entry.height > 2) && entry.buffer && entry.buffer.length > 100;
+  if (isValidEntry) {
     res.setHeader('Cache-Control', 'public, max-age=120, s-maxage=300, stale-while-revalidate=600');
     if (embed && !entry.contentType.includes('svg')) {
       const bg = /^([0-9a-fA-F]{6})$/.test(String(color)) ? `#${color}` : '#333333';
@@ -734,7 +842,10 @@ app.get('/img', async (req, res) => {
 // absent, all fetches silently use undici — streams continue to work.
 app.use(require('./routes/streamProxy'));
 app.use(require('./routes/manifest'));
+app.use(require('./routes/hlsResource'));
 app.use(require('./routes/embed'));
+// Zero-bandwidth DASH→HLS converter (must stay above the /api resolver proxy)
+app.use(require('./routes/dash'));
 // Mount the HLS Video Proxy (routes to the internal resolver on port RESOLVER_PORT)
 app.use('/api', createProxyMiddleware({
   target: `http://127.0.0.1:${RESOLVER_PORT}/api`,
@@ -753,6 +864,14 @@ app.use('/api', createProxyMiddleware({
 // Intercepts /manifest.json, /catalog/*, /meta/*, and /stream/* responses to
 // dynamically rewrite all internal proxy URLs (/img, /watch, /api/manifest)
 // to match the client's incoming Host and Protocol.
+
+// Rewriting can only fire when one of these prefixes appears somewhere in the
+// payload (both the relative and absolute-URL branches below match on them).
+// A substring scan is far cheaper than JSON-parsing multi-megabyte hub
+// responses that carry no relative URLs, so payloads without any prefix are
+// passed through untouched. Keep in sync with the prefix lists in rewriteUrl.
+const REWRITE_SCAN_PREFIXES = ['/img', '/watch', '/api/manifest', '/api/dash', '/logo', '/api/mp4proxy', '/api/fastmp4', '/api/hlschunk', '/api/hls', '/hls', '/posters', '/donate'];
+
 app.use((req, res, next) => {
   const isAddonRoute = req.path === '/manifest.json' || 
                        req.path.endsWith('/manifest.json') ||
@@ -779,9 +898,14 @@ app.use((req, res, next) => {
   res.end = function (chunk, encoding, callback) {
     if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 
+    let bodyBuffer = null;
     if (chunks.length > 0) {
-      const bodyBuffer = Buffer.concat(chunks);
+      bodyBuffer = Buffer.concat(chunks);
       const bodyString = bodyBuffer.toString('utf8');
+
+      if (!REWRITE_SCAN_PREFIXES.some((p) => bodyString.includes(p))) {
+        return originalEnd.call(res, bodyBuffer, encoding, callback);
+      }
 
       try {
         const body = JSON.parse(bodyString);
@@ -790,12 +914,12 @@ app.use((req, res, next) => {
         const rewriteUrl = (url) => {
           if (!url || typeof url !== 'string') return url;
           // Relative URLs
-          if (url.startsWith('/img') || url.startsWith('/watch') || url.startsWith('/api/manifest') || url.startsWith('/logo') || url.startsWith('/api/mp4proxy') || url.startsWith('/api/fastmp4') || url.startsWith('/api/hlschunk') || url.startsWith('/posters') || url.startsWith('/donate')) {
+          if (url.startsWith('/img') || url.startsWith('/watch') || url.startsWith('/api/manifest') || url.startsWith('/api/dash') || url.startsWith('/logo') || url.startsWith('/api/mp4proxy') || url.startsWith('/api/fastmp4') || url.startsWith('/api/hlschunk') || url.startsWith('/api/hls') || url.startsWith('/hls') || url.startsWith('/posters') || url.startsWith('/donate')) {
             modified = true;
             return `${currentBaseUrl}${url}`;
           }
           // Absolute URLs with legacy/static base or localhost/LAN IP
-          const match = url.match(/^(?:https?:\/\/[^\/]+)(\/(?:img|watch|api\/manifest|api\/mp4proxy|api\/fastmp4|api\/hlschunk|logo|posters|donate)(?:[?\/].*|\.[A-Za-z0-9]+)?)$/);
+          const match = url.match(/^(?:https?:\/\/[^\/]+)(\/(?:img|watch|api\/manifest|api\/dash|api\/mp4proxy|api\/fastmp4|api\/hlschunk|api\/hls|hls|logo|posters|donate)(?:[?\/].*|\.[A-Za-z0-9]+)?)$/);
           if (match) {
             modified = true;
             return `${currentBaseUrl}${match[1]}`;
@@ -849,7 +973,10 @@ app.use((req, res, next) => {
       }
     }
 
-    const finalBuffer = Buffer.concat(chunks);
+    // bodyBuffer already holds the exact bytes when a body was captured;
+    // re-concatenating chunks copies the whole payload a second time on every
+    // unmodified response.
+    const finalBuffer = bodyBuffer || Buffer.concat(chunks);
     originalEnd.call(res, finalBuffer, encoding, callback);
   };
 

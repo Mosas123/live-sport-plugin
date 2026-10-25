@@ -80,7 +80,31 @@ describe('match merge isolation (regression)', () => {
 
   test('the same event from two providers still merges', () => {
     const a = streamSports99Match('Chicago Cubs vs Atlanta Braves', 1789495800000);
-    const b = replayZoneMatch('Chicago Cubs vs Atlanta Braves', String(1789495800000));
+    const b = {
+      id: 'spk_1',
+      title: 'Chicago Cubs vs Atlanta Braves',
+      date: String(1789495800000),
+      status: 'upcoming',
+      category: 'baseball',
+      sources: [{ source: 'streamedpk', id: 'x2', url: 'x2' }]
+    };
+
+    const pa = agg._precompute(a);
+    const pb = agg._precompute(b);
+
+    expect(agg._sameEventPre(pa, pb)).toBe(true);
+  });
+
+  test('the same replay event from two replay providers still merges', () => {
+    const a = replayZoneMatch('Chicago Cubs vs Atlanta Braves', '2026-09-14');
+    const b = {
+      id: 'livetv_1',
+      title: 'Chicago Cubs - Atlanta Braves',
+      date: '2026-09-14',
+      status: 'finished',
+      category: 'baseball',
+      sources: [{ source: 'livetv', id: 'u2', url: 'u2' }]
+    };
 
     const pa = agg._precompute(a);
     const pb = agg._precompute(b);

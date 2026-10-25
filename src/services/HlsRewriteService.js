@@ -3,34 +3,48 @@
 /**
  * HlsRewriteService.js
  *
- * Single source of truth for HLS segment/variant URI rewriting.
+ * Single source of truth for HLS segment/variant URI rewriting and playlist transformation.
  *
- * Both /api/manifest (playlist proxy) and the speed probe in streams.js must
- * build the exact URL a player would use for a given playlist entry. Before
- * this module existed the CF worker pool and the rewrite rules were duplicated
- * inline in routes/manifest.js and streams.js, which drifted apart once.
- *
- * Rewrite rules (mirrors what routes/manifest.js did inline):
+ * Architecture:
  *  - .m3u8  → /api/manifest?url=...&referer=...&origin=...(+rckSuffix)
- *  - .image → random Cloudflare Worker (strips the 42-byte fake WebP/RIFF
- *             header Streamed.pk / TikTok CDN prepends), fallback /api/hlschunk
+ *  - TikTok / ByteDance cloaked segments (.image / ~tplv-obj / tiktokcdn):
+ *    Zero-Bandwidth Byte-Range exploit:
+ *    1. Injects `#EXT-X-BYTERANGE:<length>@42`
+ *    2. Rewrites segment URI to `/api/hls/resource/<token>/media.ts?psig=<hmac>`
+ *    3. The 307 endpoint immediately redirects the player's Range request directly to TikTok CDN.
+ *    4. TikTok CDN slices off the 42 fake WebP bytes at the CDN edge!
+ *       Net VPS bandwidth bleed: 0 KB/s.
  *  - disguised pure MPEG-TS (.png/.webp/.js, no .ts) → append '#.ts' hint
  *  - anything else → absolute URL as-is
  */
 
-const CF_IMAGE_WORKER_POOL = [
-  'https://nuvio-proxy.odedararaj456.workers.dev',
-  'https://nuvio-proxy2.rajodedara360.workers.dev',
-  'https://nuvio-proxy3.raj-odedara.workers.dev',
-  'https://spring-brook-5c1e.rajodedara456.workers.dev',
-  'https://falling-unit-ffa6.rajcfproxy1.workers.dev',
-  'https://falling-violet-3301.hansabenhodedara.workers.dev',
-  'https://nameless-dawn-2ab8.abhi-munot01.workers.dev',
-];
+const { createWorkerPool } = require('./WorkerBudget');
+const byteRangeSigner = require('./ByteRangeSigner');
+const segmentLengthService = require('./SegmentLengthService');
 
-function getCfImageWorker() {
-  if (!CF_IMAGE_WORKER_POOL.length) return null;
-  return CF_IMAGE_WORKER_POOL[Math.floor(Math.random() * CF_IMAGE_WORKER_POOL.length)];
+// Legacy fallback worker pool (for explicit opt-out or testing)
+const workerPool = createWorkerPool();
+
+/**
+ * Detect whether a segment URL is a TikTok / ByteDance cloaked segment (WebP with MPEG-TS).
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isTikTokCloakedSegment(url) {
+  if (!url || typeof url !== 'string') return false;
+  const lower = url.toLowerCase();
+  return (
+    lower.includes('.image') ||
+    lower.includes('tplv-obj') ||
+    lower.includes('tiktokcdn') ||
+    lower.includes('byteoversea') ||
+    lower.includes('ibytedtos') ||
+    lower.includes('byteimg') ||
+    lower.includes('bytegoofy') ||
+    lower.includes('cowedd4855ws') ||
+    lower.includes('bytedance')
+  );
 }
 
 /**
@@ -55,6 +69,22 @@ function resolveSegmentUrl(segmentUri, manifestUrl) {
 }
 
 /**
+ * Build the signed 307 redirect URL for a cloaked TikTok segment.
+ */
+function buildByteRangeRedirectUrl(absoluteUrl, opts = {}) {
+  const { referer = '', origin = '', absoluteAddonBaseUrl = '' } = opts;
+  const { token, psig } = byteRangeSigner.encodeSegmentToken({
+    url: absoluteUrl,
+    referer,
+    origin,
+    prefixBytes: 42
+  });
+
+  const relativePath = `/api/hls/resource/${token}/media.ts?psig=${encodeURIComponent(psig)}`;
+  return absoluteAddonBaseUrl ? new URL(relativePath, absoluteAddonBaseUrl).toString() : relativePath;
+}
+
+/**
  * Rewrite one playlist entry into the URL the player should fetch.
  */
 function rewriteHlsUri(segmentUri, manifestUrl, opts = {}) {
@@ -69,42 +99,32 @@ function rewriteHlsUri(segmentUri, manifestUrl, opts = {}) {
     return absoluteAddonBaseUrl ? new URL(manifestPath, absoluteAddonBaseUrl).toString() : manifestPath;
   }
 
-  if (absoluteUrl.includes('.image')) {
-    const cfWorker = getCfImageWorker();
-    if (cfWorker) {
-      let workerChunkUrl = `${cfWorker}/?url=${encodeURIComponent(absoluteUrl)}`;
-      if (referer) workerChunkUrl += `&referer=${encodeURIComponent(referer)}`;
-      if (origin) workerChunkUrl += `&origin=${encodeURIComponent(origin)}`;
-      return workerChunkUrl;
+  if (isTikTokCloakedSegment(absoluteUrl)) {
+    // If explicitly disabled via environment variable, use legacy CF worker budget pool
+    if (process.env.USE_TIKTOK_BYTERANGE_307 === 'off') {
+      const pick = workerPool.pick(absoluteUrl);
+      if (pick) {
+        let workerChunkUrl = `${pick.url}/seg.ts?url=${encodeURIComponent(absoluteUrl)}`;
+        if (referer) workerChunkUrl += `&referer=${encodeURIComponent(referer)}`;
+        if (origin) workerChunkUrl += `&origin=${encodeURIComponent(origin)}`;
+        return workerChunkUrl;
+      }
+
+      if (!workerPool.config.hlschunkFallback) {
+        return absoluteUrl;
+      }
+
+      let chunkPath = `/api/hlschunk?url=${encodeURIComponent(absoluteUrl)}`;
+      if (referer) chunkPath += `&referer=${encodeURIComponent(referer)}`;
+      if (origin) chunkPath += `&origin=${encodeURIComponent(origin)}`;
+      return absoluteAddonBaseUrl ? new URL(chunkPath, absoluteAddonBaseUrl).toString() : chunkPath;
     }
 
-    let chunkPath = `/api/hlschunk?url=${encodeURIComponent(absoluteUrl)}`;
-    if (referer) chunkPath += `&referer=${encodeURIComponent(referer)}`;
-    if (origin) chunkPath += `&origin=${encodeURIComponent(origin)}`;
-    return absoluteAddonBaseUrl ? new URL(chunkPath, absoluteAddonBaseUrl).toString() : chunkPath;
+    // Default: High-performance Zero-Bandwidth Byte-Range 307 Redirect
+    return buildByteRangeRedirectUrl(absoluteUrl, opts);
   }
 
-  // Plain MPEG-TS segments (e.g. the Streamed.pk 540p variant served by
-  // lb*.strmd.st) are intermittently refused on a direct fetch — observed ~1/3
-  // success, with the rest failing at the connection level. The same worker
-  // pool relays them reliably (verified 5/5 workers, valid 0x47 sync byte), so
-  // plain .ts goes through the workers too. /api/hlschunk stays as the
-  // server-side fallback when no worker is configured.
-  if (/\.ts(\?|$)/.test(absoluteUrl) && absoluteUrl.includes('strmd.st')) {
-    const cfWorker = getCfImageWorker();
-    if (cfWorker) {
-      let workerChunkUrl = `${cfWorker}/?url=${encodeURIComponent(absoluteUrl)}`;
-      if (referer) workerChunkUrl += `&referer=${encodeURIComponent(referer)}`;
-      if (origin) workerChunkUrl += `&origin=${encodeURIComponent(origin)}`;
-      return workerChunkUrl;
-    }
-
-    let chunkPath = `/api/hlschunk?url=${encodeURIComponent(absoluteUrl)}`;
-    if (referer) chunkPath += `&referer=${encodeURIComponent(referer)}`;
-    if (origin) chunkPath += `&origin=${encodeURIComponent(origin)}`;
-    return absoluteAddonBaseUrl ? new URL(chunkPath, absoluteAddonBaseUrl).toString() : chunkPath;
-  }
-
+  // Plain MPEG-TS segments stream directly from the upstream CDN (0 VPS bandwidth bleeding).
   const isPureDisguisedTs = absoluteUrl.includes('.png') || absoluteUrl.includes('.webp') || absoluteUrl.includes('.js');
   if (isPureDisguisedTs && !absoluteUrl.includes('.ts')) {
     return absoluteUrl + '#.ts';
@@ -113,9 +133,168 @@ function rewriteHlsUri(segmentUri, manifestUrl, opts = {}) {
   return absoluteUrl;
 }
 
+/**
+ * Rewrite a full HLS playlist manifest text:
+ * - Detects #EXTINF segment duration
+ * - Injects `#EXT-X-BYTERANGE:<length>@42` above cloaked TikTok segments
+ * - Rewrites segment URIs to 307 redirect endpoints
+ * - Preserves all other tags (#EXT-X-MAP, #EXT-X-STREAM-INF, etc.)
+ *
+ * @param {string} manifestBody
+ * @param {string} manifestUrl
+ * @param {Object} [opts={}]
+ * @returns {string}
+ */
+function rewriteHlsPlaylist(manifestBody, manifestUrl, opts = {}) {
+  const { referer = '', origin = '', bitrate } = opts;
+  const lines = String(manifestBody).split('\n');
+  const rewritten = [];
+  let currentDuration = null;
+  let hasPrecedingByteRange = false;
+
+  const requiresByteRange = process.env.USE_TIKTOK_BYTERANGE_307 !== 'off' && lines.some(l => {
+    const t = l.trim();
+    if (!t || t.startsWith('#')) return false;
+    return isTikTokCloakedSegment(resolveSegmentUrl(t, manifestUrl));
+  });
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      rewritten.push(line);
+      continue;
+    }
+
+    if (trimmed.startsWith('#')) {
+      if (trimmed.startsWith('#EXT-X-VERSION:')) {
+        if (requiresByteRange) {
+          const v = parseInt(trimmed.slice('#EXT-X-VERSION:'.length).trim(), 10);
+          if (isNaN(v) || v < 4) {
+            rewritten.push('#EXT-X-VERSION:4');
+            continue;
+          }
+        }
+      } else if (trimmed === '#EXTM3U') {
+        rewritten.push(line);
+        if (requiresByteRange && !manifestBody.includes('#EXT-X-VERSION:')) {
+          rewritten.push('#EXT-X-VERSION:4');
+        }
+        continue;
+      } else if (trimmed.startsWith('#EXTINF:')) {
+        const durMatch = trimmed.match(/^#EXTINF:([0-9.]+)/i);
+        if (durMatch) {
+          currentDuration = parseFloat(durMatch[1]);
+        }
+        hasPrecedingByteRange = false;
+      } else if (trimmed.startsWith('#EXT-X-BYTERANGE:')) {
+        hasPrecedingByteRange = true;
+      } else if (trimmed.startsWith('#EXT-X-MAP:')) {
+        const uriMatch = trimmed.match(/URI="([^"]+)"/);
+        if (uriMatch) {
+          try {
+            const absUri = new URL(uriMatch[1], manifestUrl).toString();
+            rewritten.push(trimmed.replace(uriMatch[1], absUri));
+            continue;
+          } catch (_) {}
+        }
+      }
+      rewritten.push(line);
+      continue;
+    }
+
+    // URI line
+    const absoluteUrl = resolveSegmentUrl(trimmed, manifestUrl);
+
+    if (absoluteUrl.includes('.m3u8')) {
+      rewritten.push(rewriteHlsUri(trimmed, manifestUrl, opts));
+      currentDuration = null;
+      hasPrecedingByteRange = false;
+      continue;
+    }
+
+    if (isTikTokCloakedSegment(absoluteUrl)) {
+      if (process.env.USE_TIKTOK_BYTERANGE_307 === 'off') {
+        rewritten.push(rewriteHlsUri(trimmed, manifestUrl, opts));
+      } else {
+        if (!hasPrecedingByteRange) {
+          const segmentLength = segmentLengthService.getSegmentLength(absoluteUrl, {
+            duration: currentDuration,
+            bitrate,
+            referer,
+            origin
+          });
+          rewritten.push(`#EXT-X-BYTERANGE:${segmentLength}@42`);
+        }
+        rewritten.push(buildByteRangeRedirectUrl(absoluteUrl, opts));
+      }
+      currentDuration = null;
+      hasPrecedingByteRange = false;
+      continue;
+    }
+
+    // Standard / direct segment
+    rewritten.push(rewriteHlsUri(trimmed, manifestUrl, opts));
+    currentDuration = null;
+    hasPrecedingByteRange = false;
+  }
+
+  return rewritten.join('\n');
+}
+
+/**
+ * Scan a manifest body for cloaked TikTok segments and pre-probe all un-cached
+ * segments in parallel before the manifest is rewritten.
+ *
+ * Ensures #EXT-X-BYTERANGE declarations match the exact byte size served by the
+ * upstream CDN, preventing player decoder EOF stalls and repeated frames.
+ *
+ * @param {string} manifestBody
+ * @param {string} manifestUrl
+ * @param {Object} [opts={}]
+ * @returns {Promise<void>}
+ */
+async function preprobeManifestSegments(manifestBody, manifestUrl, opts = {}) {
+  const { referer = '', origin = '' } = opts;
+  const lines = String(manifestBody).split('\n');
+  const urlsToProbe = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const absUrl = resolveSegmentUrl(trimmed, manifestUrl);
+    if (isTikTokCloakedSegment(absUrl)) {
+      if (!segmentLengthService.hasValidLength(absUrl)) {
+        urlsToProbe.add(absUrl);
+      }
+    }
+  }
+
+  if (urlsToProbe.size === 0) return;
+
+  // Prioritize the live edge (last 4 segments): players begin playback from the
+  // freshest edge, not the historical buffer. Bounding candidates to the latest
+  // segments ensures the concurrent probe slots are spent on the immediate chunks
+  // the player will request.
+  const liveEdgeUrls = [...urlsToProbe].slice(-4);
+
+  const probePromises = liveEdgeUrls.map(url =>
+    segmentLengthService.probeContentLength(url, { referer, origin })
+  );
+
+  await Promise.race([
+    Promise.allSettled(probePromises),
+    new Promise(resolve => setTimeout(resolve, 1500))
+  ]);
+}
+
 module.exports = {
-  CF_IMAGE_WORKER_POOL,
-  getCfImageWorker,
   resolveSegmentUrl,
   rewriteHlsUri,
+  rewriteHlsPlaylist,
+  preprobeManifestSegments,
+  isTikTokCloakedSegment,
+  buildByteRangeRedirectUrl,
+  workerPool,
 };

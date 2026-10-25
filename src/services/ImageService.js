@@ -357,6 +357,10 @@ async function getImage(rawUrl) {
           if (!tooBig && total >= 32) {
             const buf = Buffer.concat(chunks);
             const dims = parseImageDimensions(buf);
+            // Reject <= 2x2 blank tracking / placeholder pixels (e.g. dead upstream tournament endpoints)
+            if (dims.width !== null && dims.width <= 2 && dims.height !== null && dims.height <= 2) {
+              break;
+            }
             result = {
               buffer: buf,
               contentType,

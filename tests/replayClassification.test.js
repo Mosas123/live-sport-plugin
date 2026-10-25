@@ -96,7 +96,7 @@ describe('stale provider status (regression)', () => {
     // 1 hour after kickoff: still within the baseball window -> live
     const inWindow = {
       id: 'b1', title: 'A vs B', category: 'baseball', status: 'upcoming',
-      date: String(now - 1 * HOUR), sources: []
+      date: String(now - 1 * HOUR), sources: [{ source: 'replayzone', id: 'rz1', url: 'https://example.com/1' }]
     };
     expect(isMatchLive(inWindow)).toBe(true);
     expect(isReplayMatch(inWindow)).toBe(false);
@@ -104,7 +104,7 @@ describe('stale provider status (regression)', () => {
     // 6 hours after kickoff: window elapsed -> replay
     const elapsed = {
       id: 'b2', title: 'A vs B', category: 'baseball', status: 'upcoming',
-      date: String(now - 6 * HOUR), sources: []
+      date: String(now - 6 * HOUR), sources: [{ source: 'replayzone', id: 'rz2', url: 'https://example.com/2' }]
     };
     expect(isMatchLive(elapsed)).toBe(false);
     expect(isReplayMatch(elapsed)).toBe(true);
@@ -114,12 +114,12 @@ describe('stale provider status (regression)', () => {
     // 3 hours after kickoff is still within baseball's 3.5h window...
     const baseball = {
       id: 'b3', title: 'A vs B', category: 'baseball', status: 'upcoming',
-      date: String(now - 3 * HOUR), sources: []
+      date: String(now - 3 * HOUR), sources: [{ source: 'replayzone', id: 'rz3', url: 'https://example.com/3' }]
     };
     // ...but well past football's 2.5h window.
     const football = {
       id: 'f3', title: 'A vs B', category: 'football', status: 'upcoming',
-      date: String(now - 3 * HOUR), sources: []
+      date: String(now - 3 * HOUR), sources: [{ source: 'replayzone', id: 'rz4', url: 'https://example.com/4' }]
     };
 
     expect(isMatchLive(baseball)).toBe(true);
@@ -132,7 +132,7 @@ describe('stale provider status (regression)', () => {
   test('explicit terminal status still wins immediately', () => {
     const finished = {
       id: 'f4', title: 'A vs B', category: 'baseball', status: 'finished',
-      date: String(now - 30 * 60 * 1000), sources: []
+      date: String(now - 30 * 60 * 1000), sources: [{ source: 'replayzone', id: 'rz5', url: 'https://example.com/5' }]
     };
     expect(isReplayMatch(finished)).toBe(true);
   });

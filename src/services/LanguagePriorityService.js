@@ -247,14 +247,82 @@ function streamRankScore(stream) {
 }
 
 /**
+ * Resolution rank for streams within the same language rank.
+ * Higher score indicates higher visual fidelity.
+ */
+function getResolutionRank(stream) {
+  if (!stream) return 0;
+  const res = String(stream.resolution || stream.quality || '').toLowerCase();
+  if (res.includes('4k') || res.includes('2160') || res.includes('uhd')) return 5;
+  if (res.includes('1080p60') || res.includes('60fps')) return 4.5;
+  if (res.includes('1080') || res.includes('fhd')) return 4;
+  if (res.includes('720') || res === 'hd') return 3;
+  if (res.includes('sd') || res.includes('480') || res.includes('360')) return 1;
+  return 2; // Auto or unclassified
+}
+
+/**
+ * Format tier for streams within the same language rank:
+ *   Tier 0: Plain HLS (.m3u8, unencrypted) - highest priority
+ *   Tier 1: Other direct streams
+ *   Tier 2: DASH DRM (.mpd or streams requiring DRM decryption) - lower priority
+ */
+function streamFormatTier(stream) {
+  if (!stream) return 1;
+  const url = ((stream.url || '') + ' ' + (stream._rawMpdUrl || '') + ' ' + (stream.externalUrl || '')).toLowerCase();
+  const isDrm = Boolean(
+    stream.clearkey ||
+    stream.drmScheme ||
+    (stream.behaviorHints && (stream.behaviorHints.drm || stream.behaviorHints.drmScheme))
+  );
+
+  // Plain HLS: .m3u8 without DRM
+  if (url.includes('.m3u8') && !isDrm) return 0;
+  // DASH DRM: .mpd or explicit DRM
+  if (url.includes('.mpd') || isDrm) return 2;
+  return 1;
+}
+
+/**
+ * Cluster reliability tier for Vavoo feeds:
+ * 6: Server C (.c cloud cluster)
+ * 5: Server S (.s direct satellite/origin cluster)
+ * 4: Server B (.b)
+ * 3: HEVC
+ * 2: RAW
+ * 1: Backup
+ */
+function getVavooClusterRank(stream) {
+  if (!stream) return 0;
+  const isVavoo = stream._source === 'vavoo' ||
+    stream.cluster !== undefined ||
+    stream.serverCluster !== undefined ||
+    /\bvavoo\b/i.test(`${stream.name || ''} ${stream.title || ''}`);
+  if (!isVavoo) return 0;
+  const cluster = (stream.cluster || stream.serverCluster || stream.title || '').toLowerCase();
+  if (cluster.includes('backup') || stream.isBackup) return 1;
+  if (cluster.includes('raw')) return 2;
+  if (cluster.includes('hevc') || cluster.includes('h265')) return 3;
+  if (cluster.includes('server b') || cluster === 'b' || /\.b\b/.test(cluster)) return 4;
+  if (cluster.includes('server s') || cluster === 's' || /\.s\b/.test(cluster)) return 5;
+  if (cluster.includes('server c') || cluster === 'c' || /\.c\b/.test(cluster)) return 6;
+  return 3.5;
+}
+
+/**
  * The comparator handleStream applies to its assembled stream list.
  * `priorities` is the parsed list; pass parseLanguagePriority(config).
  *
- * Order, unchanged from the hard-coded sort except that the language tier is
- * now configurable:
- *   1. direct streams before web fallbacks
- *   2. language rank
- *   3. rankScore = score*0.8 + speedScore*0.2
+ * Strict Hierarchy:
+ *   1. Direct streams before web fallbacks
+ *   2. Language rank (English always first, then configured, then other)
+ *   3. Feed type: Standard/current feed before backup feed
+ *   4. Timeshift: Current feed before timeshift feed (+1 / +2)
+ *   5. Resolution / Quality tier: 4K > 1080p60 > 1080p > 720p > HD > SD
+ *   6. Vavoo cluster reliability tier: Server C > Server B > HEVC/RAW > Backup
+ *   7. Format tier: plain HLS before DASH DRM
+ *   8. CDN tier: clean direct CDN before cloaked/worker streams
+ *   9. rankScore = score*0.8 + speedScore*0.2
  */
 function compareStreams(a, b, priorities) {
   try {
@@ -264,6 +332,42 @@ function compareStreams(a, b, priorities) {
 
     const rankDelta = languageRank(a && a.language, priorities) - languageRank(b && b.language, priorities);
     if (rankDelta) return rankDelta;
+
+    // Within each language: prefer standard feed, backup last
+    const aIsBackup = Boolean(a && (a.isBackup || a._isBackup || (a.title && /\bbackup\b/i.test(a.title))));
+    const bIsBackup = Boolean(b && (b.isBackup || b._isBackup || (b.title && /\bbackup\b/i.test(b.title))));
+    const backupDelta = (aIsBackup ? 1 : 0) - (bIsBackup ? 1 : 0);
+    if (backupDelta) return backupDelta;
+
+    // Prefer live current feed over delayed timeshift (+1)
+    const aIsTimeshift = Boolean(a && (a.isTimeshift || a._isTimeshift || (a.title && /(?:\+1|\bdelay\b|\btimeshift\b)/i.test(a.title))));
+    const bIsTimeshift = Boolean(b && (b.isTimeshift || b._isTimeshift || (b.title && /(?:\+1|\bdelay\b|\btimeshift\b)/i.test(b.title))));
+    const timeshiftDelta = (aIsTimeshift ? 1 : 0) - (bIsTimeshift ? 1 : 0);
+    if (timeshiftDelta) return timeshiftDelta;
+
+    // Prefer highest quality / resolution
+    const qualityDelta = getResolutionRank(b) - getResolutionRank(a);
+    if (qualityDelta) return qualityDelta;
+
+    // Cluster reliability tier for Vavoo feeds:
+    // Only compare cluster reliability when BOTH feeds are Vavoo streams.
+    // 1080p Server C (.c cloud cluster) on top, followed by 1080p Server B (.b), HEVC/RAW, and Backup at bottom
+    const aCluster = getVavooClusterRank(a);
+    const bCluster = getVavooClusterRank(b);
+    if (aCluster > 0 && bCluster > 0) {
+      const clusterDelta = bCluster - aCluster;
+      if (clusterDelta) return clusterDelta;
+    }
+
+    const formatDelta = streamFormatTier(a) - streamFormatTier(b);
+    if (formatDelta) return formatDelta;
+
+    // CDN / Cloudflare Worker Tier:
+    // Prioritize clean direct CDN feeds over TikTok CDN feeds that require
+    // Cloudflare Worker uncloaking for every .image chunk.
+    const aIsTikTok = (a && (a.isTikTok || a._isTikTok)) ? 1 : 0;
+    const bIsTikTok = (b && (b.isTikTok || b._isTikTok)) ? 1 : 0;
+    if (aIsTikTok !== bIsTikTok) return aIsTikTok - bIsTikTok;
 
     return streamRankScore(b) - streamRankScore(a);
   } catch (_) {
@@ -282,6 +386,9 @@ module.exports = {
   canonicalLanguage,
   isEnglish,
   streamRankScore,
+  streamFormatTier,
+  getResolutionRank,
+  getVavooClusterRank,
   compareStreams,
   // Exported for tests: the fold is the single place the matching semantics of
   // every alias lookup are defined.

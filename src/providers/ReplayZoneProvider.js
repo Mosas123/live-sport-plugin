@@ -17,6 +17,11 @@ class ReplayZoneProvider {
         this._byseCache = new Map();
         this._dmCache = new Map();
         this._webCache = new Map();
+        // url -> { v, at }: entries never expire and there was no count cap,
+        // so every distinct fallback link ever probed stayed for the worker's
+        // lifetime. TTL + FIFO cap; eviction just means one re-probe later.
+        this._webCacheTtlMs = Number(process.env.REPLAYZONE_WEBCACHE_TTL_MS || 6 * 3600 * 1000);
+        this._webCacheMaxEntries = Number(process.env.REPLAYZONE_WEBCACHE_MAX || 2000);
     }
 
     async getMatches() {
@@ -39,6 +44,12 @@ class ReplayZoneProvider {
                 if (!lines[1].startsWith('~')) continue;
                 const metaParts = lines[1].replace(/^~\s*/, '').split('\t');
                 const category = (metaParts[0] || 'football').toLowerCase();
+
+                // Drop football replays: 100% of football entries in upstream replays.txt
+                // are soccerfull.net links. SoccerFullProvider is our dedicated provider
+                // that handles football replays with direct, high-quality 1080p CDN extraction.
+                if (category === 'football' || category === 'soccer') continue;
+
                 const league = metaParts[1] || '';
                 const thumbnail = metaParts[2] || '';
                 const dateStr = metaParts[3] || '';
@@ -53,6 +64,7 @@ class ReplayZoneProvider {
                     const type = (parts[1] || '').trim().toLowerCase();
                     const sourceUrl = (parts[2] || '').trim();
                     if (!/^https?:\/\//i.test(sourceUrl)) continue;
+                    if (sourceUrl.includes('soccerfull.net')) continue;
                     sources.push({
                         source: this.sourceName,
                         id: sourceUrl, // URL doubles as the resolveStream key
@@ -93,6 +105,11 @@ class ReplayZoneProvider {
         url = url || (srcObj && srcObj.url) || '';
         if (!url) return [];
 
+        const cat = (category || '').toLowerCase();
+        if (cat === 'football' || cat === 'soccer' || url.includes('soccerfull.net')) {
+            return [];
+        }
+
         // 1. Direct Byse embed (e.g. bysesukior.com, bysefujedu.com)
         if (this._isByseUrl(url)) {
             const streams = await this.extractByse(url, partName);
@@ -109,13 +126,7 @@ class ReplayZoneProvider {
             return [this._buildDirectStream(url, partName)];
         }
 
-        // 4. Soccerfull.net page embed
-        if (url.includes('soccerfull.net')) {
-            const streams = await this.extractSoccerfull(url, partName);
-            if (streams && streams.length > 0) return streams;
-        }
-
-        // 5. Dailymotion embed
+        // 4. Dailymotion embed
         if (this._isDailymotionUrl(url)) {
             return await this._resolveDailymotion(url, partName);
         }
@@ -148,7 +159,10 @@ class ReplayZoneProvider {
     async _checkWebAlive(url) {
         if (!url || typeof url !== 'string') return false;
         const cached = this._webCache.get(url);
-        if (cached !== undefined) return cached;
+        if (cached !== undefined) {
+            if (Date.now() - cached.at <= this._webCacheTtlMs) return cached.v;
+            this._webCache.delete(url);
+        }
 
         let alive = true;
         try {
@@ -172,7 +186,10 @@ class ReplayZoneProvider {
             alive = true;
         }
 
-        this._webCache.set(url, alive);
+        if (this._webCache.size >= this._webCacheMaxEntries) {
+            this._webCache.delete(this._webCache.keys().next().value);
+        }
+        this._webCache.set(url, { v: alive, at: Date.now() });
         return alive;
     }
 
@@ -330,31 +347,36 @@ class ReplayZoneProvider {
      * Formats decrypted Byse sources for direct client CDN playback (0 server bandwidth).
      */
     _formatByseStreams(sources, host, partName = '') {
-        const streams = [];
-        for (const s of sources) {
-            if (!s.url) continue;
-            const resLabel = s.label || (s.height ? `${s.height}p` : '1080p');
-            const cleanPart = partName.trim();
-            const streamTitle = cleanPart ? `${cleanPart} (${resLabel})` : `Stream (${resLabel})`;
+        const validSources = sources.filter(s => s && s.url);
+        if (validSources.length === 0) return [];
 
-            streams.push({
-                name: 'ReplayZone',
-                title: streamTitle,
-                resolution: resLabel,
-                url: s.url,
-                behaviorHints: {
-                    notWebReady: true,
-                    proxyHeaders: {
-                        request: {
-                            'Origin': `https://${host}`,
-                            'Referer': `https://${host}/`,
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
-                        }
+        validSources.sort((a, b) => {
+            const hA = parseInt(a.height || (a.label ? a.label.replace(/\D/g, '') : 0), 10) || 0;
+            const hB = parseInt(b.height || (b.label ? b.label.replace(/\D/g, '') : 0), 10) || 0;
+            return hB - hA;
+        });
+
+        const best = validSources[0];
+        const resLabel = best.label || (best.height ? `${best.height}p` : '1080p');
+        const cleanPart = partName.trim();
+        const streamTitle = cleanPart ? `${cleanPart} (${resLabel}) [SprintCDN]` : `Stream (${resLabel}) [SprintCDN]`;
+
+        return [{
+            name: 'ReplayZone',
+            title: streamTitle,
+            resolution: resLabel,
+            url: best.url,
+            behaviorHints: {
+                notWebReady: false,
+                proxyHeaders: {
+                    request: {
+                        'Origin': `https://${host}`,
+                        'Referer': `https://${host}/`,
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
                     }
                 }
-            });
-        }
-        return streams;
+            }
+        }];
     }
 
     /**
@@ -365,7 +387,9 @@ class ReplayZoneProvider {
             const u = new URL(embedUrl);
             const host = u.hostname;
             const pathParts = u.pathname.split('/').filter(Boolean);
-            const code = pathParts[pathParts.length - 1];
+            // bysekoze uses /e/<code>/<slug> — code is segment after /e/, not last segment
+            const eIdx = pathParts.indexOf('e');
+            const code = (eIdx >= 0 && pathParts[eIdx + 1]) ? pathParts[eIdx + 1] : pathParts[pathParts.length - 1];
             if (!code) return [];
 
             const cacheKey = `${host}:${code}`;
@@ -432,19 +456,112 @@ class ReplayZoneProvider {
      * handles the parallel fetching on its own, delivering full speed at zero server bandwidth.
      */
     async _resolveOkRu(url, partName = '') {
-        // Normalise embed URL: ok.ru/video/ID → ok.ru/videoembed/ID so it loads the embeddable player
-        let embedUrl = url;
-        if (/ok\.ru\/video\/\d+/.test(url)) {
-            embedUrl = url.replace('/video/', '/videoembed/');
-        }
+        try {
+            let embedUrl = url;
+            if (/ok\.ru\/video\/\d+/.test(url)) {
+                embedUrl = url.replace('/video/', '/videoembed/');
+            }
+            if (embedUrl.startsWith('//')) {
+                embedUrl = `https:${embedUrl}`;
+            }
 
-        const label = partName.trim() ? `${partName.trim()} (ok.ru)` : 'ok.ru Player';
-        return [{
-            name: 'RZ (External)',
-            title: label,
-            externalUrl: embedUrl,
-            _rzWeb: true
-        }];
+            const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
+            const res = await undici.request(embedUrl, {
+                headers: {
+                    'User-Agent': userAgent,
+                    'Referer': 'https://ok.ru/'
+                },
+                headersTimeout: 10000,
+                bodyTimeout: 10000
+            });
+            if (res.statusCode !== 200) return [];
+
+            const html = await res.body.text();
+            const optionsMatch = html.match(/data-options="([^"]+)"/i) ||
+                                 html.match(/data-module="OKVideo"\s+data-options="([^"]+)"/i);
+            if (!optionsMatch) return [];
+
+            const rawJson = optionsMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+            const parsed = JSON.parse(rawJson);
+            const meta = parsed.flashvars && parsed.flashvars.metadata;
+            let metaObj = meta;
+            if (typeof meta === 'string') {
+                try { metaObj = JSON.parse(meta); } catch (_) {}
+            }
+            if (!metaObj) return [];
+
+            const streams = [];
+            const cleanPart = partName.trim();
+            const qualityMap = {
+                'full': '1080p',
+                'hd': '720p',
+                'sd': '480p',
+                'low': '360p',
+                'lowest': '240p',
+                'mobile': '144p'
+            };
+
+            const okProxyHeaders = {
+                request: {
+                    'User-Agent': userAgent,
+                    'Referer': 'https://ok.ru/'
+                }
+            };
+
+            const qualityWeight = {
+                'full': 1080,
+                '1080p': 1080,
+                'hd': 720,
+                '720p': 720,
+                'sd': 480,
+                '480p': 480,
+                'low': 360,
+                '360p': 360,
+                'lowest': 240,
+                '240p': 240,
+                'mobile': 144,
+                '144p': 144
+            };
+
+            if (Array.isArray(metaObj.videos) && metaObj.videos.length > 0) {
+                const validVideos = metaObj.videos.filter(v => v && v.url);
+                validVideos.sort((a, b) => (qualityWeight[b.name] || 0) - (qualityWeight[a.name] || 0));
+                const bestVideo = validVideos[0];
+                if (bestVideo) {
+                    const label = qualityMap[bestVideo.name] || bestVideo.name || 'HD';
+                    const title = cleanPart ? `${cleanPart} (${label}) [OK.ru]` : `Replay (${label}) [OK.ru]`;
+
+                    streams.push({
+                        name: 'ReplayZone',
+                        title,
+                        resolution: label,
+                        url: bestVideo.url,
+                        behaviorHints: {
+                            notWebReady: false,
+                            proxyHeaders: okProxyHeaders
+                        }
+                    });
+                }
+            }
+
+            if (metaObj.hlsManifestUrl) {
+                streams.push({
+                    name: 'ReplayZone',
+                    title: cleanPart ? `${cleanPart} (Auto HLS) [OK.ru]` : 'Replay (Auto HLS) [OK.ru]',
+                    resolution: 'Auto',
+                    url: metaObj.hlsManifestUrl,
+                    behaviorHints: {
+                        notWebReady: false,
+                        proxyHeaders: okProxyHeaders
+                    }
+                });
+            }
+
+            return streams;
+        } catch (err) {
+            console.warn(`[ReplayZone] Error extracting OK.ru ${url}:`, err.message);
+            return [];
+        }
     }
 
     /**
@@ -510,7 +627,9 @@ class ReplayZoneProvider {
                 iframes.push(m[1]);
             }
 
-            const streams = [];
+            const byseStreams = [];
+            const okStreams = [];
+            const otherStreams = [];
             for (const iframeSrc of iframes) {
                 let fullIframeUrl;
                 try {
@@ -520,24 +639,26 @@ class ReplayZoneProvider {
                 }
 
                 if (this._isByseUrl(fullIframeUrl)) {
-                    const byseStreams = await this.extractByse(fullIframeUrl, partName);
-                    if (byseStreams && byseStreams.length > 0) {
-                        streams.push(...byseStreams);
+                    const extracted = await this.extractByse(fullIframeUrl, partName);
+                    if (extracted && extracted.length > 0) {
+                        byseStreams.push(...extracted);
                     }
                 } else if (fullIframeUrl.includes('ok.ru')) {
-                    const okStreams = await this._resolveOkRu(fullIframeUrl, partName);
-                    if (okStreams && okStreams.length > 0) {
-                        streams.push(...okStreams);
+                    const extracted = await this._resolveOkRu(fullIframeUrl, partName);
+                    if (extracted && extracted.length > 0) {
+                        okStreams.push(...extracted);
                     }
                 } else if (this._isDailymotionUrl(fullIframeUrl)) {
                     const dmStreams = await this._resolveDailymotion(fullIframeUrl, partName);
                     if (dmStreams && dmStreams.length > 0) {
-                        streams.push(...dmStreams);
+                        otherStreams.push(...dmStreams);
                     }
                 } else if (this._isDirectMediaUrl(fullIframeUrl)) {
-                    streams.push(this._buildDirectStream(fullIframeUrl, partName));
+                    otherStreams.push(this._buildDirectStream(fullIframeUrl, partName));
                 }
             }
+
+            const streams = [...byseStreams, ...okStreams, ...otherStreams];
 
             if (streams.length > 0) {
                 return streams;

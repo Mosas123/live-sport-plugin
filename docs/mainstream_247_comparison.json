@@ -1,0 +1,315 @@
+[
+  {
+    "channel": "Sky Sports Main Event",
+    "remoteCards": 2,
+    "localCards": 1,
+    "remoteCardName": "📺 Sky Sports Main Event",
+    "localCardName": "📺 Sky Sports Main Event",
+    "remoteStreamCount": 2,
+    "localStreamCount": 1,
+    "remoteLatencyMs": 747,
+    "localLatencyMs": 6010,
+    "remoteProviders": [
+      "DaddyLive",
+      "CDNLive"
+    ],
+    "localProviders": [
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 Sky Sports Main Event 🇬🇧 [UK • English]"
+    ]
+  },
+  {
+    "channel": "Sky Sports Premier League",
+    "remoteCards": 2,
+    "localCards": 1,
+    "remoteCardName": "📺 Sky sports Premier League",
+    "localCardName": "📺 Sky Sports Premier League",
+    "remoteStreamCount": 1,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 284,
+    "localLatencyMs": 5460,
+    "remoteProviders": [
+      "DaddyLive"
+    ],
+    "localProviders": [
+      "DaddyLive",
+      "CDNLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 Sky sports Premier League 🇬🇧 [UK • English]",
+      "📺 CDNLiveTV | 📺 Sky Sports Premier League 🇬🇧 [UK • English]"
+    ]
+  },
+  {
+    "channel": "Sky Sports Football",
+    "remoteCards": 3,
+    "localCards": 1,
+    "remoteCardName": "📺 Sky Sports Football",
+    "localCardName": "📺 Sky Sports Football",
+    "remoteStreamCount": 1,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 288,
+    "localLatencyMs": 5472,
+    "remoteProviders": [
+      "CDNLive"
+    ],
+    "localProviders": [
+      "CDNLive",
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 CDNLiveTV | 📺 Sky Sports Football 🇬🇧 [UK • English]",
+      "📺 DaddyLive | 📺 Sky Sports Football UK 🇬🇧 [UK • English]"
+    ]
+  },
+  {
+    "channel": "TNT Sports 1",
+    "remoteCards": 3,
+    "localCards": 1,
+    "remoteCardName": "📺 TNT Sports 1",
+    "localCardName": "📺 TNT Sports 1",
+    "remoteStreamCount": 1,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 273,
+    "localLatencyMs": 2113,
+    "remoteProviders": [
+      "CDNLive"
+    ],
+    "localProviders": [
+      "DaddyLive",
+      "CDNLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 TNT Sports 1 UK 🇬🇧 [UK • English]",
+      "📺 CDNLiveTV | 📺 TNT Sports 1 🇬🇧 [UK • English]"
+    ]
+  },
+  {
+    "channel": "TNT Sports 2",
+    "remoteCards": 3,
+    "localCards": 1,
+    "remoteCardName": "📺 TNT Sports 2",
+    "localCardName": "📺 TNT Sports 2",
+    "remoteStreamCount": 1,
+    "localStreamCount": 1,
+    "remoteLatencyMs": 390,
+    "localLatencyMs": 5699,
+    "remoteProviders": [
+      "CDNLive"
+    ],
+    "localProviders": [
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 TNT Sports 2 UK 🇬🇧 [UK • English]"
+    ]
+  },
+  {
+    "channel": "ESPN",
+    "remoteCards": 52,
+    "localCards": 33,
+    "remoteCardName": "📺 NFL Network",
+    "localCardName": "📺 NFL Network",
+    "remoteStreamCount": 6,
+    "localStreamCount": 8,
+    "remoteLatencyMs": 3082,
+    "localLatencyMs": 4513,
+    "remoteProviders": [
+      "DaddyLive",
+      "Streamed",
+      "CDNLive",
+      "Direct"
+    ],
+    "localProviders": [
+      "Direct",
+      "Vavoo",
+      "Streamed",
+      "CDNLive",
+      "SKTech",
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DamiTV | 📺 NFL Network 🇺🇸 [US • English]",
+      "📺 Vavoo | 📺 NFL NETWORK — United Kingdom 🇺🇸 [US • English]",
+      "📺 Streamed.pk [Admin] | 📺 English - NFL Network (ESPN 🇺🇸 [US • English]"
+    ]
+  },
+  {
+    "channel": "ESPN 2",
+    "remoteCards": 6,
+    "localCards": 3,
+    "remoteCardName": "📺 ESPN 2",
+    "localCardName": "📺 ESPN 2",
+    "remoteStreamCount": 2,
+    "localStreamCount": 4,
+    "remoteLatencyMs": 263,
+    "localLatencyMs": 5665,
+    "remoteProviders": [
+      "CDNLive"
+    ],
+    "localProviders": [
+      "CDNLive",
+      "Vavoo"
+    ],
+    "sampleLocalTitles": [
+      "📺 CDNLiveTV | 📺 ESPN 2 🇺🇸 [US • English]",
+      "📺 CDNLiveTV | 📺 ESPN 2 🇺🇸 [US • English]",
+      "📺 CDNLiveTV | 📺 ESPN 2 🇺🇸 [US • English]"
+    ]
+  },
+  {
+    "channel": "Fox Sports 1",
+    "remoteCards": 3,
+    "localCards": 2,
+    "remoteCardName": "📺 FOX Sports 1",
+    "localCardName": "📺 FOX Sports 1",
+    "remoteStreamCount": 1,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 1132,
+    "localLatencyMs": 2363,
+    "remoteProviders": [
+      "CDNLive"
+    ],
+    "localProviders": [
+      "DaddyLive",
+      "CDNLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 Fox Sports 1 USA 🇺🇸 [US • English]",
+      "📺 CDNLiveTV | 📺 FOX Sports 1 🇺🇸 [US • English]"
+    ]
+  },
+  {
+    "channel": "Willow Cricket",
+    "remoteCards": 2,
+    "localCards": 1,
+    "remoteCardName": "📺 Willow Cricket",
+    "localCardName": "📺 Willow Cricket",
+    "remoteStreamCount": 12,
+    "localStreamCount": 8,
+    "remoteLatencyMs": 5355,
+    "localLatencyMs": 5508,
+    "remoteProviders": [
+      "DaddyLive",
+      "Streamed",
+      "CDNLive",
+      "Direct"
+    ],
+    "localProviders": [
+      "Streamed",
+      "DaddyLive",
+      "CDNLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 Streamed.pk [Admin] | 📺 Willow 🇮🇳 [IN • English]",
+      "📺 Streamed.pk [Admin] | 📺 Willow 2 🇮🇳 [IN • English]",
+      "📺 Streamed.pk [Admin] | 📺 Willow Sports 🇮🇳 [IN • English]"
+    ]
+  },
+  {
+    "channel": "Astro Cricket",
+    "remoteCards": 3,
+    "localCards": 1,
+    "remoteCardName": "📺 Astro Cricket",
+    "localCardName": "📺 Astro Cricket",
+    "remoteStreamCount": 2,
+    "localStreamCount": 2,
+    "remoteLatencyMs": 280,
+    "localLatencyMs": 5675,
+    "remoteProviders": [
+      "DaddyLive",
+      "CDNLive"
+    ],
+    "localProviders": [
+      "CDNLive",
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 CDNLiveTV | 📺 Astro Cricket 🇲🇾 [MY • English]",
+      "📺 DaddyLive | 📺 Astro Cricket 🇲🇾 [MY • English]"
+    ]
+  },
+  {
+    "channel": "SuperSport Premier League",
+    "remoteCards": 0,
+    "localCards": 1,
+    "remoteCardName": "N/A",
+    "localCardName": "📺 SuperSport Premier League",
+    "remoteStreamCount": 0,
+    "localStreamCount": 1,
+    "remoteLatencyMs": 0,
+    "localLatencyMs": 2806,
+    "remoteProviders": [],
+    "localProviders": [
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 SuperSport Premier league 🇿🇦 [ZA • English]"
+    ]
+  },
+  {
+    "channel": "Eurosport 1",
+    "remoteCards": 0,
+    "localCards": 8,
+    "remoteCardName": "N/A",
+    "localCardName": "📺 EuroSport 1",
+    "remoteStreamCount": 0,
+    "localStreamCount": 10,
+    "remoteLatencyMs": 0,
+    "localLatencyMs": 5693,
+    "remoteProviders": [],
+    "localProviders": [
+      "SKTech",
+      "CDNLive",
+      "Vavoo",
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 SKTech | 📺 TEST ⓵ 🇪🇺 [EU • English]",
+      "📺 SKTech | 📺 TEST (VPN 🇪🇺 [EU • English]",
+      "📺 CDNLiveTV | 📺 EuroSport 1 🇪🇺 [EU • English]"
+    ]
+  },
+  {
+    "channel": "CBS Sports Network",
+    "remoteCards": 1,
+    "localCards": 1,
+    "remoteCardName": "📺 CBS Sports Network (CBSSN)",
+    "localCardName": "📺 CBS Sports Network (cbssn)",
+    "remoteStreamCount": 0,
+    "localStreamCount": 1,
+    "remoteLatencyMs": 15013,
+    "localLatencyMs": 1942,
+    "remoteProviders": [],
+    "localProviders": [
+      "DaddyLive"
+    ],
+    "sampleLocalTitles": [
+      "📺 DaddyLive | 📺 CBS Sports Network (CBSSN 🇺🇸 [US • English]"
+    ]
+  },
+  {
+    "channel": "Cartoon Network",
+    "remoteCards": 0,
+    "localCards": 3,
+    "remoteCardName": "N/A",
+    "localCardName": "📺 Cartoon Network",
+    "remoteStreamCount": 0,
+    "localStreamCount": 14,
+    "remoteLatencyMs": 0,
+    "localLatencyMs": 6011,
+    "remoteProviders": [],
+    "localProviders": [
+      "SKTech",
+      "DaddyLive",
+      "Vavoo"
+    ],
+    "sampleLocalTitles": [
+      "📺 SKTech | 📺 TEST (VPN",
+      "📺 SKTech | 📺 Kids",
+      "📺 DaddyLive | 📺 Cartoon Network"
+    ]
+  }
+]

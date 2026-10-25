@@ -48,22 +48,22 @@ class BaseProvider {
     cat = String(cat).toLowerCase().replace(/[^a-z0-9]/g, '');
     if (cat.includes('ncaa') || cat.includes('college')) return 'college';
     if (cat.includes('americanfootball') || cat.includes('nfl') || cat.includes('afl') || cat.includes('gridiron') || cat.includes('aussierules')) return 'american_football';
-    if (cat.includes('soccer') || cat.includes('football')) return 'football';
+    if (cat.includes('soccer') || cat.includes('football') || cat.includes('championsleague') || cat.includes('europaleague') || cat.includes('conferenceleague') || cat.includes('premierleague') || cat.includes('laliga') || cat.includes('bundesliga') || cat.includes('seriea') || cat.includes('ligue1') || cat.includes('uefa') || cat.includes('copadelrey') || cat.includes('facup')) return 'football';
     // 'mixedmartialarts' must be caught before the generic checks below — the
     // upstream label "Mixed Martial Arts" normalized to 'mixedmartialarts', a
     // string that matched no catalog id and no live-window duration, so every
     // MMA event was silently invisible (TimStreams was emitting this shape).
     if (cat.includes('mixedmartialart') || cat.includes('martialart') || cat.includes('mmaglobal')) return 'mma';
-    if (cat.includes('fight') || cat.includes('mma') || cat.includes('boxing') || cat.includes('wrestling') || cat.includes('knuckle') || cat.includes('ufc')) return 'mma';
-    if (cat.includes('formula1') || cat.includes('motogp') || cat.includes('moto') || cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1')) return 'motorsport';
-    if (cat.includes('basketball') || cat.includes('nba')) return 'basketball';
-    if (cat.includes('pga') || cat.includes('golf')) return 'golf';
-    if (cat.includes('rugby')) return 'rugby';
-    if (cat.includes('cricket')) return 'cricket';
-    if (cat.includes('tennis')) return 'tennis';
-    if (cat.includes('hockey') || cat.includes('nhl')) return 'hockey';
-    if (cat.includes('baseball') || cat.includes('mlb')) return 'baseball';
-    if (cat.includes('darts')) return 'darts';
+    if (cat.includes('fight') || cat.includes('mma') || cat.includes('boxing') || cat.includes('wrestling') || cat.includes('knuckle') || cat.includes('ufc') || cat.includes('bellator') || cat.includes('wwe') || cat.includes('aew') || cat.includes('onechampionship')) return 'mma';
+    if (cat.includes('formula1') || cat.includes('motogp') || cat.includes('moto') || cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1') || cat.includes('nascar') || cat.includes('indycar') || cat.includes('tourdefrance') || cat.includes('giro') || cat.includes('vuelta') || cat.includes('superbike') || cat.includes('wsbk')) return 'motorsport';
+    if (cat.includes('basketball') || cat.includes('nba') || cat.includes('wnba') || cat.includes('euroleague') || cat.includes('eurocup') || cat.includes('fiba')) return 'basketball';
+    if (cat.includes('pga') || cat.includes('golf') || cat.includes('livgolf') || cat.includes('rydercup')) return 'golf';
+    if (cat.includes('rugby') || cat.includes('sixnations') || cat.includes('superleague') || cat.includes('nrl')) return 'rugby';
+    if (cat.includes('cricket') || cat.includes('ipl') || cat.includes('t20') || cat.includes('odi') || cat.includes('bbl') || cat.includes('psl') || cat.includes('cpl')) return 'cricket';
+    if (cat.includes('tennis') || cat.includes('atp') || cat.includes('wta') || cat.includes('wimbledon') || cat.includes('rolandgarros') || cat.includes('usopen') || cat.includes('australianopen') || cat.includes('daviscup') || cat.includes('masters1000')) return 'tennis';
+    if (cat.includes('hockey') || cat.includes('nhl') || cat.includes('khl')) return 'hockey';
+    if (cat.includes('baseball') || cat.includes('mlb') || cat.includes('npb') || cat.includes('kbo')) return 'baseball';
+    if (cat.includes('darts') || cat.includes('pdc')) return 'darts';
     if (cat.includes('liveshow') || cat.includes('uncategorized')) return 'other';
 
     // Canonical allowlist. Anything the catalogs do not know about belongs in

@@ -38,12 +38,24 @@ function extractTeamsFromTitle(title) {
   // Strip common Cricket and generic tournament prefixes that pollute Team 1
   // (e.g. "WCL 2026 India vs", "T20 World Cup England vs", "Match 45 X vs")
   t = t.replace(/^(?:icc\s+)?(?:wcl|ipl|bbl|t20|odi|test|cpl|psl|bpl|the hundred|sa20|asia cup|world cup)\s*(?:world cup)?\s*(?:\d{4})?\s*(?:-\s*)?/i, '').trim();
-  t = t.replace(/^(?:match|game)\s*\d+\s*(?:-\s*)?/i, '').trim();
+  t = t.replace(/^(?:(?:world\s*series|stanley\s*cup|super\s*bowl|nba\s*finals|alcs|nlcs|afc|nfc)\s+)?(?:match|game)\s*\d+\s*(?:-\s*)?/i, '').trim();
+
+  // Strip replay and competition suffixes that trail the matchup in full-game titles
+  // e.g. "A vs B - NBA Preseason - Full Game Replay - October 15, 2026"
+  t = t.replace(/\s*-\s*(?:full\s*(?:game|match|race)?\s*replay|replay|highlights|all\s*goals).*/i, '');
+  t = t.replace(/\s*-\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*\d{4})?.*/i, '');
+  t = t.replace(/\s*-\s*(?:nba(?:\s*preseason)?|nhl|nfl|mlb|cfb|wnba|euroleague|premier\s*league|la\s*liga|serie\s*a|bundesliga|ligue\s*1|ucl|champions\s*league).*/i, '');
 
   const parts = t.split(VS_SPLIT);
   if (parts.length !== 2) return null;
-  const a = parts[0].trim();
-  const b = parts[1].trim();
+  let a = parts[0].trim();
+  let b = parts[1].trim();
+
+  // If b still contains trailing metadata after a dash, isolate the team name
+  if (b.includes(' - ') || b.includes(' – ') || b.includes(' — ')) {
+    b = b.split(/\s+[-–—]\s+/)[0].trim();
+  }
+
   const plausible = (s) => s.length >= 2 && s.length <= 48 && /[A-Za-z0-9]/.test(s);
   if (!plausible(a) || !plausible(b)) return null;
   return [a, b];

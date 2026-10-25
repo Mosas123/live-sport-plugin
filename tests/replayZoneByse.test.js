@@ -79,10 +79,10 @@ describe('ReplayZoneProvider - Byse Support', () => {
     const streams = provider._formatByseStreams(sources, 'bysefujedu.com', 'Part 1');
     expect(streams).toHaveLength(1);
     expect(streams[0].name).toBe('ReplayZone');
-    expect(streams[0].title).toBe('Part 1 (1080p)');
+    expect(streams[0].title).toBe('Part 1 (1080p) [SprintCDN]');
     expect(streams[0].resolution).toBe('1080p');
     expect(streams[0].url).toBe('https://cdn.example.com/master.m3u8');
-    expect(streams[0].behaviorHints.notWebReady).toBe(true);
+    expect(streams[0].behaviorHints.notWebReady).toBe(false);
     expect(streams[0].behaviorHints.proxyHeaders.request.Origin).toBe('https://bysefujedu.com');
     expect(streams[0].behaviorHints.proxyHeaders.request.Referer).toBe('https://bysefujedu.com/');
   });

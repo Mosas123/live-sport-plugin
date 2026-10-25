@@ -42,3 +42,12 @@ benchmarks/results/*.json
 !benchmarks/results/raw-forensic-audit.json
 !benchmarks/results/final-production-readiness.md
 
+# Server runtime process configuration (managed per-host, never tracked)
+ecosystem.config.js
+
+# Temporary raw public catalog dumps
+public/*.json
+
+
+
+.zcode/

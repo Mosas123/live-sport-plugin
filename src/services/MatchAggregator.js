@@ -1,11 +1,18 @@
 // ─── Fuzzy Match Helpers ────────────────────────────────────────────────────
 
-// How long past kickoff a ReplayZone archive session is retained in the
-// aggregated cache. Bounds replay list growth; other providers keep the
-// standard 24h window.
-const REPLAY_RETENTION_DAYS = 30;
+// How long past kickoff a replay archive session is retained in the
+// aggregated cache. Bounds replay list growth while preserving the full annual season.
+const REPLAY_RETENTION_DAYS = 365;
+
+const STOP_WORDS = new Set([
+  'the', 'and', 'vs', 'v', 'live', 'stream', 'fc', 'cf', 'sc', 'united', 'city',
+  'real', 'sport', 'sports', 'club', 'de', 'la', 'women', 'men', 'u19', 'u20',
+  'u21', 'u23', 'full', 'match', 'replay', 'game', 'hd'
+]);
 
 const { parseTimezone } = require('../timezone');
+const ChannelIdentityService = require('./ChannelIdentityService');
+const MatchEntity = require('../domain/MatchEntity');
 
 /**
  * Parses a provider-supplied match date into epoch milliseconds.
@@ -31,12 +38,32 @@ function _parseEventDate(raw) {
   const n = Number(raw);
   if (!Number.isNaN(n) && Number.isFinite(n) && n > 0) return n;
   const str = String(raw).trim();
-  if (!str) return 0;
+  if (!str || /^0+$/.test(str)) return 0;
   const parsed = parseTimezone(str, 'UTC');
   if (parsed && !Number.isNaN(parsed) && parsed > 0) return parsed;
   // Last resort for non-ISO shapes (e.g. "September 14, 2026").
   const fallback = Date.parse(str);
   return Number.isNaN(fallback) ? 0 : fallback;
+}
+
+/**
+ * Strips diacritics and maps non-combining Latin characters to plain ASCII
+ * so international team spellings (e.g. "Lech Poznań" vs "Lech Poznan",
+ * "Beşiktaş" vs "Besiktas", "Ferencváros" vs "Ferencvaros") merge reliably.
+ */
+function _foldText(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/[đĐ]/g, 'dj')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[łŁ]/g, 'l')
+    .replace(/[øØ]/g, 'o')
+    .replace(/[æÆ]/g, 'ae')
+    .replace(/[œŒ]/g, 'oe')
+    .replace(/[ß]/g, 'ss')
+    .replace(/[ðÐ]/g, 'd')
+    .replace(/[þÞ]/g, 'th');
 }
 
 /**
@@ -49,13 +76,21 @@ function _parseEventDate(raw) {
  * before the bare-"inter" rule, otherwise "Inter Miami" would compound to
  * "intermilan" and collide with Inter Milan.
  */
-function _compoundify(t) {
-  const aliases = [
+// Hoisted to module scope: _compoundify runs up to ~6x per _precompute row
+// (title, extracted teams, fallback teams), and rebuilding this table per call
+// allocated ~180 objects (90 RegExp + 90 pair arrays) each time — millions of
+// short-lived allocations per sync. String.replace with a /g regex always
+// starts at index 0, so shared instances carry no cross-call state.
+const COMPOUND_ALIASES = [
     // Motorsport — Formula 1 / F1 must come FIRST so the "1" never becomes a
     // stray digit that blocks e.g. "Formula 1 Azerbaijan GP" from merging with
     // "Azerbaijan Grand Prix". "GP" also normalised to "grandprix" to help
     // track-event titles collapse regardless of whether GP is spelled out.
     [/\bformula\s*(?:one|1)\b|\bf[- ]?1\b/g, 'formulaone'],
+    [/\bformula\s*(?:two|2)\b|\bf[- ]?2\b/g, 'formulatwo'],
+    [/\bformula\s*(?:three|3)\b|\bf[- ]?3\b/g, 'formulathree'],
+    [/\bformula\s*(?:four|4)\b|\bf[- ]?4\b/g, 'formulafour'],
+    [/\bformula\s*e\b|\bformula-e\b/g, 'formulae'],
     [/\bgrand\s*prix\b|\bgp\b/g, 'grandprix'],
     // Football (Soccer)
     [/\bman(chester)?\s*utd\b|\bmanchester\s*united\b/g, 'manchesterunited'],
@@ -63,15 +98,39 @@ function _compoundify(t) {
     [/\bman(chester)?\s*city\b/g, 'manchestercity'],
     [/\bspurs\b|\btottenham(\s*hotspur)?\b/g, 'tottenham'],
     [/\bwolves\b|\bwolverhampton(\s*wanderers)?\b/g, 'wolverhampton'],
-    [/\bpsg\b|\bparis\s*(saint|st)\s*germain\b/g, 'psg'],
+    [/\bpsg\b|\bparis[\s\-–—]*(saint|st)[\s\-–—]*germain\b/g, 'psg'],
     [/\bbayern(\s*m[uü]nchen)?\b|\bbayern\s*munich\b/g, 'bayernmunich'],
     [/\batl(etico)?\s*madrid\b/g, 'atleticomadrid'],
     [/\breal\s*madrid\b|\br\s*madrid\b/g, 'realmadrid'],
+    // Basketball Milano (must precede generic Milan rule)
+    [/\bolimpia\s*milan[o]?\b/g, 'olimpiamilano'],
+    // Baseball (MLB)
+    [/\bred\s*sox\b/g, 'redsox'],
+    [/\bwhite\s*sox\b/g, 'whitesox'],
+    [/\bblue\s*jays\b/g, 'bluejays'],
+    [/\bd[- ]?backs\b|\bdiamondbacks\b/g, 'diamondbacks'],
     // inter variants must precede the bare-inter rule below
     [/\binter\s*miami\b/g, 'intermiami'],
     [/\binter\s*turku\b/g, 'interturku'],
     [/\binter(\s*milan)?\b|\binternazionale\b/g, 'intermilan'],
-    [/\bac\s*milan\b/g, 'acmilan'],
+    [/\b(ac\s*)?milan\b/g, 'acmilan'],
+    [/\bolympique\s*(de\s*)?lyonn?ais\b|\blyon\b/g, 'lyon'],
+    [/\bolympique\s*(de\s*)?marseille\b|\bmarseille\b/g, 'marseille'],
+    [/\bsparta\s*prah[ae]\b|\bsparta\s*prague\b/g, 'spartaprague'],
+    [/\bslavia\s*prah[ae]\b|\bslavia\s*prague\b/g, 'slaviaprague'],
+    [/\baz(\s*alkmaar)?\b/g, 'azalkmaar'],
+    [/\bhapoel\s*be['’]?er(\s*sheva)?\b/g, 'hapoelbeersheva'],
+    [/\brb\s*salzburg\b|\bred\s*bull\s*salzburg\b|\bsalzburg\b/g, 'salzburg'],
+    [/\bsporting\s*gijon\b/g, 'sportinggijon'],
+    [/\bsporting\s*(?:cp|clube\s*de\s*portugal|lisbon)\b/g, 'sportingcp'],
+    [/\bathletic\s*(club|bilbao)\b/g, 'athleticbilbao'],
+    [/\bbayer(\s*04)?\s*leverkusen\b/g, 'bayerleverkusen'],
+    [/\bborussia\s*m[oö]nchengladbach\b|\bm['’]?gladbach\b/g, 'monchengladbach'],
+    [/\bpsv(\s*eindhoven)?\b/g, 'psveindhoven'],
+    [/\bfeyenoord(\s*rotterdam)?\b/g, 'feyenoord'],
+    [/\b(red\s*star(\s*belgrade)?|crvena\s*zvezda)\b/g, 'crvenazvezda'],
+    [/\bshakhtar(\s*donetsk)?\b/g, 'shakhtardonetsk'],
+    [/\bdynamo\s*k[yi]ev\b/g, 'dynamokyiv'],
     [/\bborussia\s*dortmund\b|\bbvb\b|\bdortmund\b/g, 'borussiadortmund'],
     [/\brb\s*leipzig\b/g, 'rbleipzig'],
     [/\baston\s*villa\b/g, 'astonvilla'],
@@ -126,22 +185,49 @@ function _compoundify(t) {
     [/\bmiami\s*heat\b|\bheat\b/g, 'miamiheat'],
     [/\bdenver\s*nuggets\b|\bnuggets\b/g, 'denvernuggets'],
     [/\bmilwaukee\s*bucks\b|\bbucks\b/g, 'milwaukeebucks'],
-  ];
-  let r = t.toLowerCase();
-  for (const [regex, rep] of aliases) r = r.replace(regex, rep);
-  return r;
+    // Vietnamese clubs / cities
+    [/\bha\s*noi\b/g, 'hanoi'],
+    [/\bho\s*chi\s*minh\b/g, 'hochiminh'],
+    [/\bda\s*nang\b/g, 'danang'],
+    [/\bthe\s*cong\b/g, 'thecong'],
+    [/\bnam\s*dinh\b/g, 'namdinh'],
+    [/\bbinh\s*duong\b|\bbihn\s*duong\b/g, 'binhduong'],
+];
+
+function _compoundify(t) {
+  return _compoundifyF(_foldText(t));
+}
+
+// Pre-folded variants: callers that already ran _foldText on the input skip
+// the redundant NFKD cascade. The fold is idempotent, so results are identical
+// to the folding versions. _tokenizeF additionally assumes lowercase input
+// (any _compoundifyF output qualifies — the [^a-z0-9] strip below would drop
+// uppercase letters, exactly as the original did on such inputs).
+function _stripNoiseF(t) {
+  if (!t) return '';
+  return t
+    .replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(live|stream|streaming|free|hd|fhd|4k|hq|web|online|tv|match|fixture|round|week|day|game|league|cup|tournament|season|fc|cf|sc|cd|ca|afc|fk|sk|bk|rsc|vfb|tsv|tsg)\b/gi, ' ');
 }
 
 function _stripNoise(t) {
-  return t
-    .replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\b(live|stream|streaming|free|hd|fhd|4k|hq|web|online|tv|match|fixture|round|week|day|game|league|cup|tournament|season|fc|cf|sc|cd|ca|afc|fk|sk|bk|rsc|vfb|tsv)\b/gi, ' ');
+  return _stripNoiseF(_foldText(t));
 }
 
-function _tokenize(t) {
+function _compoundifyF(t) {
+  let r = t.toLowerCase();
+  for (const [regex, rep] of COMPOUND_ALIASES) r = r.replace(regex, rep);
+  return r;
+}
+
+function _tokenizeF(t) {
   return t.replace(/[^a-z0-9]/g, ' ').split(/\s+/)
     .filter(w => w.length > 2)
     .map(w => (w.length > 3 && w.endsWith('s')) ? w.slice(0, -1) : w); // naive singular: newells->newell, sports->sport
+}
+
+function _tokenize(t) {
+  return _tokenizeF(_foldText(t));
 }
 
 /**
@@ -152,6 +238,7 @@ function _tokenize(t) {
 function _teamsSimilar(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
+  if (a.replace(/\s+/g, '') === b.replace(/\s+/g, '')) return true;
   const at = a.split(' ').filter(w => w.length > 2);
   const bt = b.split(' ').filter(w => w.length > 2);
   if (at.length === 0 || bt.length === 0) return false;
@@ -163,15 +250,191 @@ function _teamsSimilar(a, b) {
   return minLen > 0 && (common / minLen) >= 0.7;
 }
 
+const COUNTRY_CANONICAL = {
+  'uk': 'united kingdom',
+  'gb': 'united kingdom',
+  'great britain': 'united kingdom',
+  'england': 'united kingdom',
+  'united kingdom': 'united kingdom',
+  'us': 'united states',
+  'usa': 'united states',
+  'united states': 'united states',
+  'de': 'germany',
+  'ger': 'germany',
+  'deutschland': 'germany',
+  'germany': 'germany',
+  'fr': 'france',
+  'fra': 'france',
+  'france': 'france',
+  'es': 'spain',
+  'esp': 'spain',
+  'spain': 'spain',
+  'it': 'italy',
+  'ita': 'italy',
+  'italy': 'italy',
+  'tr': 'turkey',
+  'tur': 'turkey',
+  'turkey': 'turkey',
+  'pl': 'poland',
+  'pol': 'poland',
+  'polska': 'poland',
+  'poland': 'poland',
+  'pt': 'portugal',
+  'por': 'portugal',
+  'portugal': 'portugal',
+  'nl': 'netherlands',
+  'ned': 'netherlands',
+  'holland': 'netherlands',
+  'netherlands': 'netherlands',
+  'ar': 'arabia',
+  'arabic': 'arabia',
+  'arabia': 'arabia'
+};
+
+function _normalizeCountry(c) {
+  if (!c) return '';
+  const s = String(c).toLowerCase().trim();
+  return COUNTRY_CANONICAL[s] || s;
+}
+
+const MOTORSPORT_GENERICS = new Set([
+  'grandprix', 'gp', 'formulaone', 'formulatwo', 'formulathree', 'formulafour', 'formulae',
+  'f1', 'f2', 'f3', 'f4', 'fe', 'motogp', 'moto2', 'moto3', 'nascar', 'xfinity', 'indycar', 'wsbk', 'wrc', 'dtm', 'rally', 'superbike',
+  'race', 'sunday', 'saturday', 'friday', 'thursday', 'wednesday', 'tuesday', 'monday',
+  'practice', 'qualifying', 'sprint', 'championship', 'world', 'cup',
+  'full', 'replay', 'show', 'season', 'review', 'series', 'day',
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december'
+]);
+
+// Every non-'other' branch of _extractMotorsportSeriesT requires one of these
+// keywords in the title or league, so their absence proves the result is
+// 'other' and the ~40-regex battery can be skipped. False positives are
+// harmless (they only run the full classifier).
+const MOTORSPORT_KEYWORD_RE = /formula|nascar|xfinity|truck|indy|indianapolis|moto|superbike|wsbk|wrc|rally|dtm|prix|cup|\bf[- ]?[1-4]\b/i;
+
+function _extractMotorsportSeries(title, league = '') {
+  return _extractMotorsportSeriesT(_foldText(title || '').toLowerCase(), _foldText(league || '').toLowerCase());
+}
+
+// t / l are already folded AND lowercased by the caller.
+function _extractMotorsportSeriesT(t, l) {
+  const matchSeries = (str) => {
+    if (!str) return null;
+    if (/\bf1\s*academy\b|\bformula\s*4\b|\bf4\b/i.test(str)) return 'f4';
+    if (/\bformula\s*e\b|\bformula-e\b|\be-prix\b|\beprix\b/i.test(str)) return 'fe';
+    if (/\bformula\s*(?:two|2)\b|\bf[- ]?2\b/i.test(str)) return 'f2';
+    if (/\bformula\s*(?:three|3)\b|\bf[- ]?3\b/i.test(str)) return 'f3';
+    if (/\bformula\s*(?:one|1)\b|\bf[- ]?1\b|\bformulaone\b/i.test(str)) return 'f1';
+    if (/\bnascar\s*xfinity\b|\bxfinity\s*series\b|\bxfinity\b/i.test(str)) return 'nascar_xfinity';
+    if (/\bnascar\s*craftsman\s*truck\b|\bcraftsman\s*truck\b|\btruck\s*series\b|\bnascar\s*truck\b/i.test(str)) return 'nascar_truck';
+    if (/\bnascar\b|\bcup\s*series\b|\bmonster\s*energy\s*cup\b|\bsprint\s*cup\b/i.test(str)) return 'nascar';
+    if (/\bindycar\b|\bindy\s*500\b|\bindianapolis\s*500\b/i.test(str)) return 'indycar';
+    if (/\bmoto\s*2\b|\bmoto2\b/i.test(str)) return 'moto2';
+    if (/\bmoto\s*3\b|\bmoto3\b/i.test(str)) return 'moto3';
+    if (/\bmotogp\b/i.test(str)) return 'motogp';
+    if (/\bwsbk\b|\bworld\s*superbike\b|\bsuperbike\b/i.test(str)) return 'wsbk';
+    if (/\bwrc\b|\bworld\s*rally\b/i.test(str)) return 'wrc';
+    if (/\bdtm\b/i.test(str)) return 'dtm';
+    return null;
+  };
+
+  const fromTitle = matchSeries(t);
+  if (fromTitle) return fromTitle;
+  const fromLeague = matchSeries(l);
+  if (fromLeague) return fromLeague;
+
+  if (/\brally\b/i.test(t) || /\brally\b/i.test(l)) return 'wrc';
+
+  return 'other';
+}
+
+function _extractMotorsportSession(title) {
+  if (!title) return 'race';
+  return _extractMotorsportSessionT(_foldText(title).toLowerCase());
+}
+
+// s is already folded AND lowercased by the caller.
+function _extractMotorsportSessionT(s) {
+  if (!s) return 'race';
+
+  // 1. Season Review
+  if (/\b(?:season|year)\s*in\s*review\b|\bseason\s*review\b/i.test(s)) {
+    return 'season_review';
+  }
+
+  // 2. Pre / Post race / Shows / Media
+  if (/\bpre[\s-]race\b|\bthe\s*f1\s*show\b|\bf1\s*show\b|\bpaddock\s*uncut\b|\bpaddock\b|\bpreview\b|\bpress\s*conference\b/i.test(s)) {
+    return 'pre_race';
+  }
+  if (/\bpost[\s-]race\b|\bchequered\s*flag\b|\bafter\s*the\s*flag\b/i.test(s)) {
+    return 'post_race';
+  }
+
+  // 3. Testing & Shakedown days
+  const isTestingOrShakedown = /\b(?:test|testing|shakedown)\b/i.test(s);
+  const dayMatch = s.match(/\bday[\s-]?([1-4])\b/i);
+  if (dayMatch && (isTestingOrShakedown || !/\b(?:practice|qualifying|sprint|race)\b/i.test(s))) {
+    return `day_${dayMatch[1]}`;
+  }
+  if (isTestingOrShakedown) {
+    return 'testing';
+  }
+
+  // 4. Practice sessions (FP1 - FP4)
+  if (/\b(?:1st|first)\s*(?:free\s*)?practice\b|\b(?:free\s*)?practice\s*1\b|\bfp\s*1\b/i.test(s)) return 'p1';
+  if (/\b(?:2nd|second)\s*(?:free\s*)?practice\b|\b(?:free\s*)?practice\s*2\b|\bfp\s*2\b/i.test(s)) return 'p2';
+  if (/\b(?:3rd|third)\s*(?:free\s*)?practice\b|\b(?:free\s*)?practice\s*3\b|\bfp\s*3\b/i.test(s)) return 'p3';
+  if (/\b(?:4th|fourth)\s*(?:free\s*)?practice\b|\b(?:free\s*)?practice\s*4\b|\bfp\s*4\b/i.test(s)) return 'p4';
+
+  // 5. Sprint Qualifying / Shootout
+  if (/\bsprint\s*(?:shootout|qualifying)\b|\bsq\s*[1-3]?\b/i.test(s)) {
+    return 'sprint_qualifying';
+  }
+
+  // 6. Sprint (Race)
+  if (/\bsprint(?:\s*race)?\b/i.test(s)) {
+    return 'sprint';
+  }
+
+  // 7. Qualifying
+  if (/\bqualifying\b|\bshootout\b|\bpole\s*position\b/i.test(s)) {
+    return 'qualifying';
+  }
+
+  // 8. Generic Practice
+  if (/\b(?:free\s*)?practice\b/i.test(s)) {
+    return 'practice';
+  }
+
+  // 9. Main Race (Default for motorsport events)
+  return 'race';
+}
+
 /**
  * Try to split a match title into [team1, team2] using common separators.
  * Returns null if the title doesn't look like a "team1 vs team2" fixture.
  */
-function _tryExtractTeams(title) {
-  const clean = _compoundify(_stripNoise(title));
+function _tryExtractTeams(title, precomputedSeries) {
+  if (!title) return null;
+  // `title` arrives pre-folded from _precompute; the F-variants below skip the
+  // redundant folds the old chain paid 3x per call.
+  const clean = _compoundifyF(_stripNoiseF(title));
+  // Return null for motorsport events so race titles are never parsed as dual-team fixtures
+  const series = precomputedSeries !== undefined ? precomputedSeries : _extractMotorsportSeries(title);
+  if (series !== 'other' || /\b(?:grandprix|formulaone|formulatwo|formulathree|formulafour|formulae|motogp|nascar|indycar|wsbk|wrc|dtm|rally|practice|qualifying|sprint)\b/i.test(clean)) {
+    return null;
+  }
   const parts = clean.split(/\s(?:vs?\.?|@|[-–—])\s/i);
   if (parts.length === 2) {
-    return [_tokenize(parts[0]).join(' '), _tokenize(parts[1]).join(' ')];
+    return [_tokenizeF(parts[0]).join(' '), _tokenizeF(parts[1]).join(' ')];
+  }
+  const extracted = extractTeamsFromTitle(title);
+  if (extracted && extracted.length === 2) {
+    return [
+      _tokenizeF(_compoundifyF(_stripNoiseF(_foldText(extracted[0])))).join(' '),
+      _tokenizeF(_compoundifyF(_stripNoiseF(_foldText(extracted[1])))).join(' ')
+    ];
   }
   return null;
 }
@@ -180,12 +443,118 @@ function _tryExtractTeams(title) {
 
 const { extractTeamsFromTitle } = require('./TeamNameExtractor');
 
+// Identity key mirroring the merge loop's 7-field source equality (source, id,
+// streamSource, streamId, group, channelName, name — deliberately NOT url),
+// joined with a byte that cannot occur in provider display fields.
+const sourceIdentityKey = (s) => [
+  s.source || '', s.id || '', s.streamSource || '', s.streamId || '',
+  s.group || '', s.channelName || '', s.name || ''
+].join('\u0000');
+
 class MatchAggregator {
-  constructor({ timStreamsProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamedPkProvider, cacheService, yamlProviders, replayzoneProvider, daddyLiveProvider, teamLogoService, liveTvProvider, damiTvProvider, ppvStProvider }) {
-    this.providers = [timStreamsProvider, streamedPkProvider, watchFootyProvider, cdnLiveProvider, ...(yamlProviders || []), replayzoneProvider, ...(liveTvProvider ? [liveTvProvider] : []), ...(daddyLiveProvider ? [daddyLiveProvider] : []), ...(damiTvProvider ? [damiTvProvider] : []), ...(ppvStProvider ? [ppvStProvider] : [])];
+  constructor({ timStreamsProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamedPkProvider, cacheService, yamlProviders, replayzoneProvider, daddyLiveProvider, teamLogoService, liveTvProvider, damiTvProvider, ppvStProvider, soccerFullProvider, basketballVideoProvider, nflVideoProvider, skTechProvider, fullRacesProvider, hockeyReplaysProvider, mlbLiveProvider, vavooProvider, ak47LiveProvider, leafProvider, providerHealthService, broadcasterMatchService } = {}) {
+    this.providers = [timStreamsProvider, streamedPkProvider, watchFootyProvider, cdnLiveProvider, ...(yamlProviders || []), replayzoneProvider, ...(liveTvProvider ? [liveTvProvider] : []), ...(daddyLiveProvider ? [daddyLiveProvider] : []), ...(damiTvProvider ? [damiTvProvider] : []), ...(ppvStProvider ? [ppvStProvider] : []), ...(soccerFullProvider ? [soccerFullProvider] : []), ...(basketballVideoProvider ? [basketballVideoProvider] : []), ...(nflVideoProvider ? [nflVideoProvider] : []), ...(skTechProvider ? [skTechProvider] : []), ...(fullRacesProvider ? [fullRacesProvider] : []), ...(hockeyReplaysProvider ? [hockeyReplaysProvider] : []), ...(mlbLiveProvider ? [mlbLiveProvider] : []), ...(vavooProvider ? [vavooProvider] : []), ...(ak47LiveProvider ? [ak47LiveProvider] : []), ...(leafProvider ? [leafProvider] : [])];
     this.streamSports99Provider = streamSports99Provider;
     this.cacheService = cacheService;
     this.teamLogoService = teamLogoService;
+    this.providerHealthService = providerHealthService;
+    this.vavooProvider = vavooProvider;
+    this.broadcasterMatchService = broadcasterMatchService;
+    if (this.providerHealthService) this.providerHealthService.registerProviders(this.providers);
+  }
+
+  _extractMotorsportSeries(title, league) {
+    return _extractMotorsportSeries(title, league);
+  }
+
+  _extractMotorsportSession(title) {
+    return _extractMotorsportSession(title);
+  }
+
+  /**
+   * Enriches live fixtures with top-quality 1080p Vavoo broadcast sources
+   * by cross-referencing broadcaster channel names (from DaddyLive etc.)
+   * with Vavoo's indexed live channels.
+   *
+   * @param {Array<Object>} matches
+   */
+  _enrichMatchesWithBroadcasters(matches) {
+    if (!this.broadcasterMatchService || !Array.isArray(matches)) return;
+    if (this.vavooProvider && typeof this.vavooProvider.isEnabled === 'function' && !this.vavooProvider.isEnabled()) {
+      return;
+    }
+
+    let enrichedCount = 0;
+    for (const match of matches) {
+      if (!match || !Array.isArray(match.sources) || match.sources.length === 0) continue;
+      // Do not inject into 24/7 channels or VOD replays
+      if (match.category === 'networks' || match.rawCategory === '24/7 TV Channels' || String(match.id || '').includes('_ch_')) continue;
+      if (match.isReplay || (match.id && (match.id.startsWith('rz_') || match.id.startsWith('bv_') || match.id.startsWith('nfl_') || match.id.startsWith('sf_') || match.id.startsWith('fr_') || match.id.startsWith('hr_')))) continue;
+
+      // Extract candidate broadcaster names from all sources
+      const candidateNames = [];
+      for (const src of match.sources) {
+        if (!src) continue;
+        const candidateName = src.channelName || src.channel_name || src.channel;
+        if (candidateName && typeof candidateName === 'string' && candidateName.trim()) {
+          candidateNames.push(candidateName.trim());
+        }
+      }
+
+      // Check if this fixture has specific event/overflow channels (e.g., Canal+ Live 3, Canal+ Extra 2)
+      const hasCanalOverflow = candidateNames.some(c => /canal\+?\s*(live|extra)\s*\d+/i.test(c));
+      const hasMovistarOverflow = candidateNames.some(c => /movistar\s*(liga|deportes|campeones)\s*\d+/i.test(c));
+
+      // If specific overflow channels exist, prune any linear channels that were mistakenly added
+      if (hasCanalOverflow) {
+        match.sources = match.sources.filter(s => {
+          if (s && s.source === 'vavoo') {
+            const chName = String(s.channelName || '').toLowerCase();
+            if (chName.includes('canal') && (chName.includes('sport') || chName.includes('premiere')) && !chName.includes('live') && !chName.includes('extra')) {
+              return false;
+            }
+          }
+          return true;
+        });
+      }
+
+      const existingVavooUrls = new Set(
+        match.sources
+          .filter(s => s && s.source === 'vavoo')
+          .map(s => s.id)
+      );
+
+      // Prioritize numbered event feeds and filter out conflicting generic network channels
+      const prioritizedCandidates = candidateNames.filter(c => {
+        if (hasCanalOverflow && /canal\+?\s*(sport|premiere?)/i.test(c) && !/(live|extra)/i.test(c)) {
+          return false;
+        }
+        if (hasMovistarOverflow && /movistar\s*(plus|\+)/i.test(c) && !/(liga|deportes|campeones)/i.test(c)) {
+          return false;
+        }
+        return true;
+      });
+
+      let injectedForThisMatch = 0;
+
+      for (const candidateName of prioritizedCandidates) {
+        const vavooSource = this.broadcasterMatchService.createVavooSource(candidateName);
+        if (vavooSource && vavooSource.id && !existingVavooUrls.has(vavooSource.id)) {
+          existingVavooUrls.add(vavooSource.id);
+          match.sources.push(vavooSource);
+          injectedForThisMatch++;
+          if (injectedForThisMatch >= 8) break; // Allow up to 8 broadcast feeds per match across regions
+        }
+      }
+
+      if (injectedForThisMatch > 0) {
+        enrichedCount++;
+      }
+    }
+
+    if (enrichedCount > 0) {
+      console.log(`[MatchAggregator] Injected Vavoo 1080p broadcast feeds into ${enrichedCount} live fixture(s).`);
+    }
   }
 
   /**
@@ -194,24 +563,88 @@ class MatchAggregator {
    * of inside every comparison removes ~50x of repeated work on large catalogs.
    */
   _precompute(e) {
-    const title = e && e.title ? String(e.title) : '';
     const id = e && e.id != null ? String(e.id) : '';
-    const normalized = _compoundify(_stripNoise(title));
+    const isChannel = Boolean(
+      (e && (e.category === 'networks' || e.rawCategory === '24/7 TV Channels' || String(e.id || '').includes('_ch_'))) ||
+      id.startsWith('dlv_ch_') || id.startsWith('cdn_ch_') || id.startsWith('sktech_ch_') || id.startsWith('vavoo_ch_')
+    );
+    const title = e && e.title ? _foldText(e.title) : '';
+    // Fold the title ONCE and thread the folded + lowercased forms through
+    // the whole pipeline. The old chain re-ran the NFKD/diacritic cascade
+    // 6-11x per row (stripNoise, compoundify, tokenize, motorsport checks and
+    // team extraction each folded their input again); the fold is idempotent,
+    // so single-fold results are identical.
+    const titleLower = title ? title.toLowerCase() : '';
+    const leagueLower = e && e.league ? _foldText(e.league).toLowerCase() : '';
+    const normalized = _compoundifyF(_stripNoiseF(title));
+
+    // Motorsport detection: when the category is definitively not motorsport
+    // AND neither title nor league carries any motorsport keyword, the series
+    // classifier provably answers 'other' (every non-'other' branch requires
+    // one of MOTORSPORT_KEYWORD_RE's tokens), so the battery is skipped.
+    const catNorm = this._normalizeCategory(e && e.category);
+    const motorsportSeries = isChannel ? 'other'
+      : ((catNorm === 'motorsport' || MOTORSPORT_KEYWORD_RE.test(`${titleLower} ${leagueLower}`))
+          ? _extractMotorsportSeriesT(titleLower, leagueLower)
+          : 'other');
+    const isMotorsport = !isChannel && (catNorm === 'motorsport' || motorsportSeries !== 'other');
+    const extractedTeams = (isMotorsport || isChannel) ? null : _tryExtractTeams(title, motorsportSeries);
+    const fallbackTeams = (!extractedTeams && !isMotorsport && !isChannel && e && e.team1 && e.team2 && e.team1.name && e.team2.name)
+      ? [
+          _tokenizeF(_compoundifyF(_stripNoiseF(_foldText(e.team1.name)))).join(' '),
+          _tokenizeF(_compoundifyF(_stripNoiseF(_foldText(e.team2.name)))).join(' ')
+        ]
+      : null;
+
+    let rawCategory = e && e.category ? String(e.category) : '';
+    if (rawCategory === 'football' && /\b(?:euroleague|eurocup|fiba|eurobasket|adriatic league|b1\.league)\b/i.test(`${title} ${e && e.league || ''}`)) {
+      rawCategory = 'basketball';
+      if (e) e.category = 'basketball';
+    }
+
+    let channelIdentityKey = (e && e.channelIdentityKey) ? e.channelIdentityKey : null;
+    let channelNumber = (e && e.channelNumber !== undefined && e.channelNumber !== null) ? e.channelNumber : null;
+    let canonicalTitle = (e && e.canonicalTitle) ? e.canonicalTitle : null;
+
+    if (isChannel && (!channelIdentityKey || !canonicalTitle)) {
+      const parsed = ChannelIdentityService.parseChannel(title, { group: e && (e.group || e.league) });
+      if (!channelIdentityKey) channelIdentityKey = parsed.identityKey;
+      if (channelNumber === null) channelNumber = parsed.channelNumber;
+      if (!canonicalTitle) canonicalTitle = parsed.canonicalTitle;
+    }
+
     return {
       id,
-      category: e && e.category ? String(e.category) : '',
+      category: rawCategory,
       date: _parseEventDate(e && e.date),
-      teams: _tryExtractTeams(title),
-      tokens: new Set(_tokenize(normalized).filter(w => { const n = Number(w); return !(n >= 2000 && n <= 2100); })),
+      teams: extractedTeams || fallbackTeams,
+      tokens: new Set(_tokenizeF(normalized).filter(w => { const n = Number(w); return !(n >= 2000 && n <= 2100); })),
       norm: normalized.replace(/\s+/g, ' ').trim(),
+      motorsportSeries,
+      // Session is only ever read when BOTH sides of a comparison are
+      // motorsport (_sameEventPre guard 3b), so non-motorsport rows carry the
+      // placeholder and skip the session regex battery as well.
+      motorsportSession: (isChannel || !isMotorsport) ? 'race' : _extractMotorsportSessionT(titleLower),
       // Extract digits from the NORMALIZED form so compound tokens like
-      // "formulaone" don't leave a stray "1". Also strip 4-digit calendar
-      // years (2020–2099) since providers sometimes brand titles with the
-      // season year and it must not block merging with un-branded twins.
-      digits: (normalized.match(/\d+/g) || [])
+      // "formulaone" don't leave a stray "1". Strip 4-digit calendar years
+      // and day numbers following month names (e.g. October 15) so date
+      // metadata does not act as a channel-number collision blocker.
+      digits: isChannel ? '' : (normalized
+        .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\b/gi, ' ')
+        .match(/\d+/g) || [])
         .filter(d => { const n = Number(d); return !(n >= 2000 && n <= 2100); })
         .sort()
-        .join(',')
+        .join(','),
+      status: e && e.status ? String(e.status) : '',
+      isReplay: !isChannel && ((e && e.status === 'finished') || id.startsWith('rz_') || id.startsWith('bv_') || id.startsWith('nfl_') || id.startsWith('sf_') || id.startsWith('livetv_') || id.startsWith('fr_') || id.startsWith('hr_')),
+      isChannel,
+      channelIdentityKey,
+      channelNumber,
+      canonicalTitle,
+      league: e && e.league ? String(e.league).toLowerCase().trim() : '',
+      group: (e && e.sources && e.sources[0] && (e.sources[0].group || e.sources[0].country))
+        ? String(e.sources[0].group || e.sources[0].country).toLowerCase().trim()
+        : (e && e.group ? String(e.group).toLowerCase().trim() : '')
     };
   }
 
@@ -226,18 +659,46 @@ class MatchAggregator {
   _normalizeCategory(c) {
     if (!c) return c;
     const lc = c.toLowerCase();
-    if (['nbl', 'nba', 'wnba', 'euroleague', 'ncaa_basketball'].includes(lc)) return 'basketball';
+    if (['nbl', 'nba', 'wnba', 'euroleague', 'eurocup', 'fiba', 'ncaa_basketball'].includes(lc)) return 'basketball';
     if (['nfl', 'ncaa', 'cfl', 'college'].includes(lc)) return 'american_football';
     if (['nrl', 'super_league', 'afl', 'rugby_league', 'rugby_union', 'rugby15'].includes(lc)) return 'rugby';
-    if (['mls', 'epl', 'la_liga', 'bundesliga', 'serie_a', 'ligue_1', 'ucl', 'uel'].includes(lc)) return 'football';
+    if (['mls', 'epl', 'la_liga', 'bundesliga', 'serie_a', 'ligue_1', 'ucl', 'uel', 'soccer', 'football'].includes(lc)) return 'football';
     if (['formula_1', 'formulaone', 'motogp', 'indycar', 'nascar'].includes(lc)) return 'motorsport';
     if (['mlb', 'npb'].includes(lc)) return 'baseball';
     if (['nhl', 'khl', 'ice hockey', 'ice_hockey', 'icehockey'].includes(lc)) return 'hockey';
-    if (['sports', 'sport', 'networks'].includes(lc)) return 'other';
+    if (lc === 'networks') return 'networks';
+    if (['sports', 'sport'].includes(lc)) return 'other';
     return lc;
   }
 
   _sameEventPre(p1, p2) {
+    // 0. Static VOD Replays must NEVER merge with continuous 24/7 TV channels or live fixtures
+    if ((p1.isReplay && (p2.isChannel || !p2.isReplay)) || (p2.isReplay && (p1.isChannel || !p1.isReplay))) {
+      return false;
+    }
+
+    // 0b. Continuous 24/7 TV channels must NEVER merge with scheduled fixtures (and vice versa)
+    if (Boolean(p1.isChannel) !== Boolean(p2.isChannel)) {
+      return false;
+    }
+
+    // 0c. Continuous 24/7 TV channels: Universal Channel Identity.
+    // Preserves channel numbers (e.g. Astro Cricket 1 vs 2 remain separate).
+    // Aggregates regional, language, quality, and backup variants into one card.
+    // Evaluated immediately to avoid fixture-specific guards (motorsport series, token length, date diffs).
+    if (p1.isChannel && p2.isChannel) {
+      // 1. Strict channel number protection: different numbers NEVER merge!
+      if (p1.channelNumber !== p2.channelNumber) return false;
+
+      // 2. Universal Channel Identity Key match
+      if (p1.channelIdentityKey && p2.channelIdentityKey) {
+        return p1.channelIdentityKey === p2.channelIdentityKey;
+      }
+
+      if (p1.norm === p2.norm) return true;
+      return false;
+    }
+
     // 1. Category mismatch guard
     // Some providers use league-specific slugs (nbl, nba, nfl, mls, nrl, afl)
     // while others use the parent sport name (basketball, american_football,
@@ -251,14 +712,43 @@ class MatchAggregator {
     if (c1 && c2 && c1 !== 'other' && c2 !== 'other' && c1 !== c2 && !isCollegeFootball) {
       return false;
     }
+
+    // Motorsport cross-category guard: motorsport events must NEVER merge with non-motorsport events
+    const isMoto1 = c1 === 'motorsport' || p1.motorsportSeries !== 'other';
+    const isMoto2 = c2 === 'motorsport' || p2.motorsportSeries !== 'other';
+    if ((isMoto1 && !isMoto2) || (!isMoto1 && isMoto2)) {
+      return false;
+    }
+
     // 2. Exact ID match
     if (p1.id && p2.id && p1.id === p2.id) return true;
-    // 3. Date window guard — events more than 24h apart are definitely different
-    if (p1.date && p2.date && Math.abs(p1.date - p2.date) > 86400000) return false;
+
+    // 3. Date window & motorsport identity guards
+    if (isMoto1 && isMoto2) {
+      // 3a. Series isolation: different series never merge
+      if (p1.motorsportSeries !== p2.motorsportSeries && p1.motorsportSeries !== 'other' && p2.motorsportSeries !== 'other') {
+        return false;
+      }
+      // 3b. Session isolation: distinct sessions never merge
+      if (p1.motorsportSession !== p2.motorsportSession) {
+        return false;
+      }
+      // 3c. Date guard: date-0 or missing date cannot bypass date comparison
+      if (!p1.date || !p2.date || p1.date <= 0 || p2.date <= 0) {
+        if (p1.norm !== p2.norm) return false;
+      } else if (Math.abs(p1.date - p2.date) > 48 * 3600 * 1000) {
+        // Events > 48 hours apart never merge for motorsport
+        return false;
+      }
+    } else {
+      // Standard date window guard — events more than 24h apart (or 4 days for replays) are definitely different
+      const maxDateDiff = (p1.isReplay && p2.isReplay) ? 345600000 : 86400000;
+      if (p1.date && p2.date && Math.abs(p1.date - p2.date) > maxDateDiff) return false;
+    }
 
     // 5. Dual-team extraction — if both titles parse as "team1 vs team2", require
     //    BOTH teams to independently fuzzy-match. (Skip for motorsport which has no teams).
-    if (p1.teams && p2.teams && c1 !== 'motorsport' && c2 !== 'motorsport') {
+    if (p1.teams && p2.teams && !isMoto1 && !isMoto2) {
       const fwd = _teamsSimilar(p1.teams[0], p2.teams[0]) && _teamsSimilar(p1.teams[1], p2.teams[1]);
       const rev = _teamsSimilar(p1.teams[0], p2.teams[1]) && _teamsSimilar(p1.teams[1], p2.teams[0]);
       return fwd || rev;
@@ -269,36 +759,32 @@ class MatchAggregator {
     if (p1.tokens.size === 0 || p2.tokens.size === 0) return false;
 
     // Digit signatures must agree: "beIN 1" vs "beIN 2", "Court 13" vs "Court 7"
-    // are different channels/events even when the words are identical. (Skip for motorsport Grand Prix).
-    const isGrandPrix = (t) => t.has('grandprix') || t.has('gp') || t.has('formulaone') || t.has('motogp') || t.has('nascar') || t.has('rally');
-    const cIsMoto = c1 === 'motorsport' || c2 === 'motorsport';
-    if (!cIsMoto || !(isGrandPrix(p1.tokens) && isGrandPrix(p2.tokens))) {
+    // are different channels/events even when the words are identical.
+    if (!isMoto1 && !isMoto2) {
       if (p1.digits !== p2.digits) return false;
     }
 
     // 6a. One fixture + one channel-like listing: the channel-like tokens must be
     //     a subset of the fixture tokens ("Real Madrid live" ⊂ "Real Madrid vs
     //     Barcelona"). This keeps single-team listings merging with the fixture.
-    if ((p1.teams || p2.teams) && !cIsMoto) {
+    if ((p1.teams || p2.teams) && !isMoto1 && !isMoto2) {
       const channel = p1.teams ? p2 : p1;
       const fixture = p1.teams ? p1 : p2;
       for (const w of channel.tokens) if (!fixture.tokens.has(w)) return false;
       return true;
     }
 
-    // 6b. Both channel-like: strict identity only. Distinct channels with shared
-    //     branding must never merge.
     if (p1.norm === p2.norm) return true;
 
-    // 6c. Motorsport specific fallback: Formula 1, MotoGP, etc.
-    // e.g. "Bahrain Grand Prix - Race" vs "Formula 1 Bahrain Grand Prix in Malaysia"
-    if (c1 === 'motorsport' || c2 === 'motorsport') {
-      const isGrandPrix = (t) => t.has('grandprix') || t.has('gp') || t.has('formulaone') || t.has('motogp') || t.has('nascar') || t.has('rally');
+    // 6c. Motorsport specific fallback: Formula 1, MotoGP, NASCAR, etc.
+    // e.g. "RACE - F1 2026 - Singapore Grand Prix Full Race Replay" vs "Formula 1 Singapore Grand Prix 2026 Race Replay"
+    if (isMoto1 && isMoto2) {
+      const isGrandPrix = (t) => t.has('grandprix') || t.has('gp') || t.has('formulaone') || t.has('formulatwo') || t.has('formulathree') || t.has('formulafour') || t.has('formulae') || t.has('motogp') || t.has('moto2') || t.has('moto3') || t.has('nascar') || t.has('rally') || t.has('indycar') || t.has('dtm') || t.has('wsbk') || t.has('superbike');
       if (isGrandPrix(p1.tokens) && isGrandPrix(p2.tokens)) {
-        const generics = new Set(['grandprix', 'gp', 'formulaone', 'f1', 'motogp', 'nascar', 'rally', 'race', 'sunday', 'saturday', 'friday', 'practice', 'qualifying', 'sprint', 'championship', 'world', 'cup']);
-        const specificShared = [...p1.tokens].filter(x => p2.tokens.has(x) && !generics.has(x) && isNaN(x));
+        const specificShared = [...p1.tokens].filter(x => p2.tokens.has(x) && !MOTORSPORT_GENERICS.has(x) && isNaN(x));
         if (specificShared.length >= 1) return true;
       }
+      return false; // Motorsport never falls through to loose subset/Jaccard
     }
 
     // Subset check: if one token set is entirely contained in the other (minimum
@@ -327,12 +813,143 @@ class MatchAggregator {
     return this._sameEventPre(this._precompute(e1), this._precompute(e2));
   }
 
+  /**
+   * Merges two matching MatchEntity instances into one unified meta card.
+   * Unifies sources, preserves canonical title, and ensures correct category.
+   *
+   * @param {MatchEntity} primary
+   * @param {MatchEntity} secondary
+   * @returns {MatchEntity}
+   */
+  mergeMatches(primary, secondary) {
+    if (!primary) return secondary;
+    if (!secondary) return primary;
+
+    const p1 = this._precompute(primary);
+    const p2 = this._precompute(secondary);
+
+    const aliasIds = new Set([
+      ...(primary.aliasIds || []),
+      ...(secondary.aliasIds || [])
+    ]);
+    if (secondary.id && secondary.id !== primary.id) {
+      aliasIds.add(secondary.id);
+    }
+    if (primary.id) {
+      aliasIds.add(primary.id);
+    }
+
+    const merged = new MatchEntity({
+      ...primary,
+      aliasIds: Array.from(aliasIds),
+      sources: [...(primary.sources || [])]
+    });
+
+    const getSourceKey = (s) => [
+      s.source || '',
+      s.id || '',
+      s.streamSource || '',
+      s.streamId || '',
+      s.url || '',
+      s.group || '',
+      s.channelName || '',
+      s.name || ''
+    ].join('|');
+
+    const existingSourceKeys = new Set(
+      (merged.sources || []).map(getSourceKey)
+    );
+
+    if (Array.isArray(secondary.sources)) {
+      for (const src of secondary.sources) {
+        const key = getSourceKey(src);
+        if (!existingSourceKeys.has(key)) {
+          existingSourceKeys.add(key);
+          merged.sources.push(src);
+        }
+      }
+    }
+
+    if (p1.isChannel || p2.isChannel) {
+      merged.category = 'networks';
+      const canonical = p1.canonicalTitle || p2.canonicalTitle || primary.canonicalTitle || secondary.canonicalTitle || primary.title;
+      merged.title = canonical;
+      merged.baseTitle = canonical;
+      merged.canonicalTitle = canonical;
+      merged.channelIdentityKey = p1.channelIdentityKey || p2.channelIdentityKey;
+      merged.channelNumber = p1.channelNumber || p2.channelNumber;
+    }
+
+    return merged;
+  }
+
+  async _fetchProviderMatches(provider) {
+    const startedAt = Date.now();
+    try {
+      const matches = await provider.getMatches();
+      if (this.providerHealthService) {
+        this.providerHealthService.recordResult(provider, {
+          matches,
+          durationMs: Date.now() - startedAt,
+        });
+      }
+      return matches;
+    } catch (error) {
+      if (this.providerHealthService) {
+        this.providerHealthService.recordResult(provider, {
+          matches: [],
+          durationMs: Date.now() - startedAt,
+          error,
+        });
+      }
+      throw error;
+    }
+  }
+
   async syncMatches() {
     console.log('[MatchAggregator] Fetching from all providers...');
+    if (this.providerHealthService) this.providerHealthService.startSync();
     const finalMatches = [];
     const finalPres = []; // precomputed identity for each accepted match
     const idIndex = new Map(); // exact ID/alias -> index in finalMatches
+    // Parallel per-index Sets (source identity keys / alias ids) so merges
+    // dedupe via O(1) hash lookups instead of O(S_in x S_exist) comparator
+    // scans and O(A) aliasIds.includes() walks.
+    const finalSourceKeySets = [];
+    const finalAliasSets = [];
     const categoryBuckets = new Map(); // normalized sport category -> array of finalMatches indices
+
+    // Index previous sync kickoff dates to resolve dateless scrapes (e.g. highfly/leaf, ak47 playlists)
+    const prevDateMap = new Map();
+    try {
+      // Pure reads below — the read-only snapshot avoids a full-catalog clone.
+      const prevMatches = (this.cacheService && typeof this.cacheService.getMatchesReadOnly === 'function')
+        ? (this.cacheService.getMatchesReadOnly() || [])
+        : ((this.cacheService && typeof this.cacheService.getMatches === 'function')
+            ? (this.cacheService.getMatches() || [])
+            : []);
+      for (const pm of prevMatches) {
+        if (!pm || !pm.date || pm.date === '0') continue;
+        const pmDateMs = _parseEventDate(pm.date);
+        if (!pmDateMs) continue;
+        if (pm.id) prevDateMap.set(pm.id, String(pmDateMs));
+        if (Array.isArray(pm.aliasIds)) {
+          for (const aid of pm.aliasIds) if (aid) prevDateMap.set(aid, String(pmDateMs));
+        }
+      }
+    } catch (_) {}
+
+    // ─── HIGH PERFORMANCE DSA INDICES ──────────────────────────────────────────
+    // 1. O(1) Channel Index: 24/7 channels match strictly on normalized title
+    //    signature (p.norm). Indexing them eliminates ~8,000,000 unnecessary
+    //    pairwise comparisons across thousands of TV channels.
+    const channelNormIndex = new Map(); // p.norm -> finalMatches index
+
+    // 2. Multi-Token Inverted Index: maps significant non-trivial title/team tokens
+    //    to the set of finalMatches indices containing them. Dual-team fixtures and
+    //    discrete events query this to test ONLY the candidate matches sharing
+    //    at least 1-2 content words, dropping comparison time from O(N^2) to O(N).
+    const tokenIndex = new Map(); // token -> Set of finalMatches indices
 
     // The merge scan is O(incoming x accepted). At production scale one
     // provider's rows used to land as a single ~200ms synchronous block on the
@@ -351,34 +968,115 @@ class MatchAggregator {
           if (!match.id || !match.title) continue;
           if (!match.sources || !Array.isArray(match.sources) || match.sources.length === 0) continue;
 
+          // Reconcile missing kickoff dates from previous sync cache or embedded ID timestamps
+          if (!match.date || match.date === '0' || match.date === 0) {
+            if (prevDateMap.has(match.id)) {
+              match.date = prevDateMap.get(match.id);
+            } else if (Array.isArray(match.aliasIds)) {
+              for (const aid of match.aliasIds) {
+                if (prevDateMap.has(aid)) {
+                  match.date = prevDateMap.get(aid);
+                  break;
+                }
+              }
+            } else {
+              const tsMatch = String(match.id).match(/[-_](1\d{9}|1\d{12})$/);
+              if (tsMatch) {
+                const tsVal = Number(tsMatch[1]);
+                const epochMs = tsMatch[1].length === 10 ? tsVal * 1000 : tsVal;
+                if (epochMs > 0 && Number.isFinite(epochMs)) match.date = String(epochMs);
+              }
+            }
+          }
+
         const pre = this._precompute(match);
         let idx = -1;
 
-        // 1. Fast O(1) Exact ID & Alias check
+        // 1. Fast O(1) Exact ID & Alias check with identity verification
+        let candIdx = -1;
         if (match.id && idIndex.has(match.id)) {
-          idx = idIndex.get(match.id);
+          candIdx = idIndex.get(match.id);
         } else if (Array.isArray(match.aliasIds)) {
           for (const aid of match.aliasIds) {
             if (aid && idIndex.has(aid)) {
-              idx = idIndex.get(aid);
+              candIdx = idIndex.get(aid);
               break;
             }
           }
         }
+        if (candIdx !== -1) {
+          if (this._sameEventPre(finalPres[candIdx], pre)) {
+            idx = candIdx;
+          }
+        }
 
-        // 2. Bucketed candidate search if no exact ID match
-        if (idx === -1) {
+        // 2. Fast O(1) Channel Lookup
+        // For continuous 24/7 network channels, channel identity requires universal channel identity key
+        // or normalized title match (pre.norm). Lookup directly in O(1).
+        if (idx === -1 && pre.isChannel) {
+          let candidateIdx = -1;
+          if (pre.channelIdentityKey && channelNormIndex.has(pre.channelIdentityKey)) {
+            candidateIdx = channelNormIndex.get(pre.channelIdentityKey);
+          } else if (pre.norm && channelNormIndex.has(pre.norm)) {
+            candidateIdx = channelNormIndex.get(pre.norm);
+          }
+          if (candidateIdx !== -1 && this._sameEventPre(finalPres[candidateIdx], pre)) {
+            idx = candidateIdx;
+          }
+        }
+
+        // 3. Fast Multi-Token Inverted Index (Dual-Teams & Fixtures)
+        // Two sporting events can ONLY merge if they share at least one non-trivial team/title token.
+        // Intersect inverted index entries to evaluate ONLY high-probability candidate twins.
+        if (idx === -1 && !pre.isChannel) {
+          const candidateCounts = new Map();
+          for (const tok of pre.tokens) {
+            if (STOP_WORDS.has(tok) || tok.length < 3) continue;
+            const set = tokenIndex.get(tok);
+            if (!set) continue;
+            for (const cIdx of set) {
+              candidateCounts.set(cIdx, (candidateCounts.get(cIdx) || 0) + 1);
+            }
+          }
+
+          if (candidateCounts.size > 0) {
+            // Sort candidate matches by shared token count descending (strongest twins first)
+            const sortedCandidates = Array.from(candidateCounts.entries())
+              .sort((a, b) => b[1] - a[1]);
+
+            for (const [cIdx, sharedCount] of sortedCandidates) {
+              // If fixture has multiple tokens, require at least 2 shared tokens to test
+              if (sharedCount < 2 && pre.tokens.size > 2) continue;
+              const pCand = finalPres[cIdx];
+              // Date-window early exit: events > 24 hours apart (or 4 days for replays) never merge
+              const maxDateDiff = (pre.isReplay && pCand.isReplay) ? 345600000 : 86400000;
+              if (pre.date && pCand.date && Math.abs(pre.date - pCand.date) > maxDateDiff) continue;
+              if (this._sameEventPre(pCand, pre)) {
+                idx = cIdx;
+                break;
+              }
+            }
+          }
+        }
+
+        // 4. Narrow Category Bucket Fallback
+        // Handles unindexed edge-cases (single generic word titles or motorsport races without teams).
+        // 24/7 continuous TV channels are indexed strictly in O(1) channelNormIndex and NEVER fall through to linear scans.
+        if (idx === -1 && !pre.isChannel) {
           const c2 = this._normalizeCategory(pre.category);
           const rawCat2 = (pre.category || '').toLowerCase();
           const isCollegeFootball2 = rawCat2 === 'college' || c2 === 'american_football' || c2 === 'football';
 
           if (c2 === 'other' || !c2) {
-            // 'other' can cross-match with any category
-            for (let i = 0; i < finalMatches.length; i++) {
-              if (this._sameEventPre(finalPres[i], pre)) { idx = i; break; }
+            // 'other' cross-matches with date window guard
+            for (let i = finalMatches.length - 1; i >= 0; i--) {
+              const pCand = finalPres[i];
+              if (pCand.isChannel) continue;
+              const maxDateDiff = (pre.isReplay && pCand.isReplay) ? 345600000 : 86400000;
+              if (pre.date && pCand.date && Math.abs(pre.date - pCand.date) > maxDateDiff) continue;
+              if (this._sameEventPre(pCand, pre)) { idx = i; break; }
             }
           } else {
-            // Check only matching category bucket + 'other' bucket + optional college football cross-bucket
             const checkedIndices = new Set();
             const bucketsToCheck = [categoryBuckets.get(c2), categoryBuckets.get('other')];
             if (isCollegeFootball2) {
@@ -388,11 +1086,15 @@ class MatchAggregator {
             for (let bIdx = 0; bIdx < bucketsToCheck.length; bIdx++) {
               const b = bucketsToCheck[bIdx];
               if (!b) continue;
-              for (let j = 0; j < b.length; j++) {
+              for (let j = b.length - 1; j >= 0; j--) {
                 const i = b[j];
                 if (checkedIndices.has(i)) continue;
                 checkedIndices.add(i);
-                if (this._sameEventPre(finalPres[i], pre)) {
+                const pCand = finalPres[i];
+                if (pCand.isChannel) continue;
+                const maxDateDiff = (pre.isReplay && pCand.isReplay) ? 345600000 : 86400000;
+                if (pre.date && pCand.date && Math.abs(pre.date - pCand.date) > maxDateDiff) continue;
+                if (this._sameEventPre(pCand, pre)) {
                   idx = i;
                   break;
                 }
@@ -403,13 +1105,40 @@ class MatchAggregator {
         }
 
         if (idx === -1) {
+          // If a standalone replay match has no date, give it today's date (YYYY-MM-DD)
+          // so it sorts at the top of replays and is accessible via date filters/hubs
+          if (!match.date && pre.isReplay) {
+            match.date = new Date().toISOString().slice(0, 10);
+            pre.date = new Date(match.date).getTime();
+          }
           const newIdx = finalMatches.length;
           finalMatches.push(match);
           finalPres.push(pre);
+          finalSourceKeySets.push(new Set((match.sources || []).map(sourceIdentityKey)));
+          finalAliasSets.push(new Set(Array.isArray(match.aliasIds) ? match.aliasIds.filter(Boolean) : []));
 
           if (match.id) idIndex.set(match.id, newIdx);
           if (Array.isArray(match.aliasIds)) {
             for (const aid of match.aliasIds) if (aid) idIndex.set(aid, newIdx);
+          }
+
+          // Register in O(1) Channel Index
+          if (pre.isChannel) {
+            if (pre.channelIdentityKey) {
+              channelNormIndex.set(pre.channelIdentityKey, newIdx);
+            }
+            if (pre.norm) {
+              channelNormIndex.set(pre.norm, newIdx);
+            }
+          }
+
+          // Register in Multi-Token Inverted Index
+          if (!pre.isChannel) {
+            for (const tok of pre.tokens) {
+              if (STOP_WORDS.has(tok) || tok.length < 3) continue;
+              if (!tokenIndex.has(tok)) tokenIndex.set(tok, new Set());
+              tokenIndex.get(tok).add(newIdx);
+            }
           }
 
           const normCat = this._normalizeCategory(match.category) || 'other';
@@ -426,33 +1155,40 @@ class MatchAggregator {
 
         const existing = finalMatches[idx];
         if (!existing.aliasIds) existing.aliasIds = [];
-        if (match.id && !existing.aliasIds.includes(match.id)) {
+        const aliasSet = finalAliasSets[idx] || (finalAliasSets[idx] = new Set(existing.aliasIds));
+        if (match.id && !aliasSet.has(match.id)) {
+          aliasSet.add(match.id);
           existing.aliasIds.push(match.id);
           idIndex.set(match.id, idx);
         }
         if (Array.isArray(match.aliasIds)) {
           for (const aid of match.aliasIds) {
-            if (aid && !existing.aliasIds.includes(aid)) {
+            if (aid && !aliasSet.has(aid)) {
+              aliasSet.add(aid);
               existing.aliasIds.push(aid);
               idIndex.set(aid, idx);
             }
           }
         }
         if (match.sources && Array.isArray(match.sources)) {
-          match.sources.forEach(src => {
-            if (!existing.sources.find(s => s.id === src.id && s.source === src.source)) {
+          const keySet = finalSourceKeySets[idx] || (finalSourceKeySets[idx] = new Set(existing.sources.map(sourceIdentityKey)));
+          for (const src of match.sources) {
+            const key = sourceIdentityKey(src);
+            if (!keySet.has(key)) {
+              keySet.add(key);
               existing.sources.push(src);
             }
-          });
+          }
         }
         if (match.popular === '1') existing.popular = '1';
-        if (!existing.poster && match.poster && !match.poster.includes('ppvservices.st')) existing.poster = match.poster;
-        if (!existing.logo && match.logo && !match.logo.includes('ppvservices.st')) existing.logo = match.logo;
-        if (!existing.thumbnail_url && match.thumbnail_url && !match.thumbnail_url.includes('ppvservices.st')) existing.thumbnail_url = match.thumbnail_url;
+        if (!existing.poster && match.poster && !match.poster.includes('ppvservices.st') && !match.poster.includes('unique-tournament') && !match.poster.includes('ondemand.st')) existing.poster = match.poster;
+        if (!existing.logo && match.logo && !match.logo.includes('ppvservices.st') && !match.logo.includes('unique-tournament') && !match.logo.includes('ondemand.st')) existing.logo = match.logo;
+        if (!existing.thumbnail_url && match.thumbnail_url && !match.thumbnail_url.includes('ppvservices.st') && !match.thumbnail_url.includes('unique-tournament') && !match.thumbnail_url.includes('ondemand.st')) existing.thumbnail_url = match.thumbnail_url;
         if (existing.category === 'networks' || match.category === 'networks') existing.poster = '';
         // Carry a live score across the merge the same way artwork is carried.
         // A later provider that reports a score wins over an earlier blank.
         if (!existing.score && match.score) existing.score = match.score;
+        if (!existing.date && match.date) existing.date = match.date;
         if (!existing.background && match.background) existing.background = match.background;
         if (!existing.league && match.league) existing.league = match.league;
         if (!existing.team1 && match.team1) existing.team1 = match.team1;
@@ -487,10 +1223,28 @@ class MatchAggregator {
         // Canonical naming: prefer a team-vs-team fixture title over a
         // channel-like listing title, so the merged event keeps the most
         // informative name regardless of which provider arrived first.
-        if (!existing._titleIsFixture && pre.teams) {
+        // Never overwrite motorsport titles with incoming secondary titles.
+        if (!existing._titleIsFixture && pre.teams && pre.motorsportSeries === 'other' && existing.category !== 'motorsport') {
           existing.title = match.title;
           existing._titleIsFixture = true;
           finalPres[idx] = pre;
+        } else if (pre.isChannel && finalPres[idx].isChannel) {
+          existing.category = 'networks';
+          const targetCanonicalTitle = existing.canonicalTitle || pre.canonicalTitle;
+          if (targetCanonicalTitle) {
+            existing.title = targetCanonicalTitle;
+            existing.baseTitle = targetCanonicalTitle;
+            existing.canonicalTitle = targetCanonicalTitle;
+            existing._canonicalTitleSet = true;
+          }
+          if (!existing.channelIdentityKey && pre.channelIdentityKey) existing.channelIdentityKey = pre.channelIdentityKey;
+          if (!existing.channelNumber && pre.channelNumber) existing.channelNumber = pre.channelNumber;
+          if (pre.channelIdentityKey && !channelNormIndex.has(pre.channelIdentityKey)) {
+            channelNormIndex.set(pre.channelIdentityKey, idx);
+          }
+          if (pre.norm && !channelNormIndex.has(pre.norm)) {
+            channelNormIndex.set(pre.norm, idx);
+          }
         }
         }
         if (end < providerMatches.length) await yieldToLoop();
@@ -502,27 +1256,74 @@ class MatchAggregator {
     let anyProviderSucceeded = false;
 
     // ── 12-Hour Replay Cadence ──────────────────────────────────────────────
-    // Replay events (ReplayZone & LiveTV 21-day archives) are static past fixtures.
-    // Re-scraping 21 days of Russian mirrors and archive pages on every server restart
+    // Replay events (ReplayZone, LiveTV & SoccerFull archives) are static past fixtures.
+    // Re-scraping mirrors and archive pages on every server restart
     // or sync burns significant CPU, network, and RAM. Reuse cached replays if they
     // were synced within the last 12 hours.
-    const REPLAY_PROVIDERS = new Set(['replayzone', 'livetv']);
+    const REPLAY_PROVIDERS = new Set(['replayzone', 'livetv', 'soccerfull', 'basketballvideo', 'nflvideo', 'fullraces', 'hockeyreplays', 'mlblive']);
     const REPLAY_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
-    const previous = (this.cacheService && typeof this.cacheService.getMatches === 'function')
-      ? this.cacheService.getMatches()
-      : [];
-    const previousReplays = previous.filter(m => m && m.sources && m.sources.some(s => s.source === 'replayzone' || s.source === 'livetv'));
+    const previousRO = (this.cacheService && typeof this.cacheService.getMatchesReadOnly === 'function')
+      ? (this.cacheService.getMatchesReadOnly() || [])
+      : ((this.cacheService && typeof this.cacheService.getMatches === 'function')
+          ? (this.cacheService.getMatches() || [])
+          : []);
 
-    if (this.lastReplaySync === undefined && this.cacheService && this.cacheService.lastFetchTime) {
-      this.lastReplaySync = this.cacheService.lastFetchTime;
+    // Cache-derived rows are merged (mutated) by the loop below and enriched
+    // after the sync, so they enter as copy-on-write clones: the row plus its
+    // alias/source ARRAYS and the two team objects, WITHOUT cloning each
+    // source object (a sync only ever appends sources; it never mutates one).
+    // This replaces the old full deep-clone of the entire catalog that
+    // getMatches() performed on every sync.
+    const cloneRowForSync = (m) => ({
+      ...m,
+      aliasIds: Array.isArray(m.aliasIds) ? [...m.aliasIds] : m.aliasIds,
+      sources: Array.isArray(m.sources) ? [...m.sources] : m.sources,
+      team1: (m.team1 && typeof m.team1 === 'object') ? { ...m.team1 } : m.team1,
+      team2: (m.team2 && typeof m.team2 === 'object') ? { ...m.team2 } : m.team2,
+    });
+
+    // Sanitize cached replays while cloning: purge non-replay sources (e.g.
+    // sktech/daddylive feeds mistakenly attached in past runs).
+    const previousReplays = [];
+    for (const m of previousRO) {
+      if (!m || !Array.isArray(m.sources)) continue;
+      const hasReplaySource = m.sources.some(s => s && REPLAY_PROVIDERS.has(s.source));
+      if (!hasReplaySource) continue;
+      const hasForeignSource = m.sources.some(s => s && !REPLAY_PROVIDERS.has(s.source));
+      previousReplays.push(hasForeignSource
+        ? { ...cloneRowForSync(m), sources: m.sources.filter(s => s && REPLAY_PROVIDERS.has(s.source)) }
+        : cloneRowForSync(m));
+    }
+
+    const cachedProviderCounts = new Map();
+    if (previousReplays.length > 0) {
+      for (const m of previousReplays) {
+        if (Array.isArray(m.sources)) {
+          for (const s of m.sources) {
+            if (s && s.source) {
+              cachedProviderCounts.set(s.source, (cachedProviderCounts.get(s.source) || 0) + 1);
+            }
+          }
+        }
+      }
     }
 
     const isReplayFresh = previousReplays.length > 0 && this.lastReplaySync && (Date.now() - this.lastReplaySync < REPLAY_SYNC_INTERVAL_MS);
 
     if (isReplayFresh) {
-      console.log(`[MatchAggregator] Reusing ${previousReplays.length} cached replay events (synced ${Math.round((Date.now() - this.lastReplaySync) / 60000)}m ago; 12h cadence). Skipping LiveTV & ReplayZone scrape.`);
+      console.log(`[MatchAggregator] Reusing ${previousReplays.length} cached replay events (synced ${Math.round((Date.now() - this.lastReplaySync) / 60000)}m ago; 12h cadence).`);
       await processProviderMatches(previousReplays);
+      if (this.providerHealthService) {
+        for (const provider of this.providers) {
+          const name = provider && (provider.sourceName || provider.name || '');
+          if (!REPLAY_PROVIDERS.has(name)) continue;
+          const count = cachedProviderCounts.get(name) || 0;
+          if (count > 0) {
+            this.providerHealthService.recordCached(provider, count, 'Fresh replay cache reused');
+          }
+        }
+      }
       anyProviderSucceeded = true;
     } else {
       this.lastReplaySync = Date.now();
@@ -531,7 +1332,8 @@ class MatchAggregator {
     const providersToQuery = this.providers.filter(p => {
       if (!p) return false;
       const name = p.sourceName || p.name || '';
-      if (REPLAY_PROVIDERS.has(name) && isReplayFresh) {
+      // Only skip replay provider if it was already present in fresh cache
+      if (REPLAY_PROVIDERS.has(name) && isReplayFresh && (cachedProviderCounts.get(name) || 0) > 0) {
         return false;
       }
       return true;
@@ -541,7 +1343,7 @@ class MatchAggregator {
       // Memory-safe sequential fetching (Alwaysdata)
       for (const p of providersToQuery) {
         try {
-          const providerMatches = await p.getMatches();
+          const providerMatches = await this._fetchProviderMatches(p);
           if (Array.isArray(providerMatches) && providerMatches.length > 0) anyProviderSucceeded = true;
           await processProviderMatches(providerMatches);
         } catch (err) {
@@ -550,7 +1352,7 @@ class MatchAggregator {
       }
     } else {
       // Fast parallel fetching (Render / Local)
-      const results = await Promise.allSettled(providersToQuery.map(p => p.getMatches()));
+      const results = await Promise.allSettled(providersToQuery.map(p => this._fetchProviderMatches(p)));
       for (let index = 0; index < results.length; index++) {
         const promiseResult = results[index];
         if (promiseResult.status === 'fulfilled') {
@@ -610,7 +1412,7 @@ class MatchAggregator {
       // retention window instead of an open-ended exemption.
       const expiryWindowMs = 24 * 3600 * 1000;
       const replayExpiryWindowMs = REPLAY_RETENTION_DAYS * 24 * 3600 * 1000;
-      const isReplayZone = match.sources && match.sources.some(s => s.source === 'replayzone' || s.source === 'livetv');
+      const isReplayZone = match.sources && match.sources.some(s => s.source === 'replayzone' || s.source === 'livetv' || s.source === 'soccerfull' || s.source === 'basketballvideo' || s.source === 'nflvideo' || s.source === 'fullraces');
       const windowMs = isReplayZone ? replayExpiryWindowMs : expiryWindowMs;
       return now <= kickoff + windowMs;
     });
@@ -650,9 +1452,11 @@ class MatchAggregator {
       const usedProvider = (provider) => finalMatches.some((m) =>
         Array.isArray(m.sources) && m.sources.some((s) => s && s.source === provider));
 
-      let previous = [];
-      try { previous = this.cacheService.getMatches() || []; } catch (_) { previous = []; }
-      const presentIds = new Set(activeMatches.map((m) => m && m.id).filter(Boolean));
+        let previous = [];
+        try {
+          previous = (this.cacheService.getMatchesReadOnly ? this.cacheService.getMatchesReadOnly() : this.cacheService.getMatches()) || [];
+        } catch (_) { previous = []; }
+        const presentIds = new Set(activeMatches.map((m) => m && m.id).filter(Boolean));
 
       for (const provider of CARRY_FORWARD_PROVIDERS) {
         // 'Provider answered' is not enough to decide health: a provider can
@@ -673,6 +1477,22 @@ class MatchAggregator {
           console.warn(`[MatchAggregator] ${provider} schedule fetch failed this sync; carrying forward its previous entries.`);
         }
 
+        // Priority is pure per-entry data: decorate once (Schwartzian transform)
+        // instead of recomputing date parses and regexes inside every one of
+        // the O(N log N) comparator calls.
+        const _priority = (m) => {
+          const rawDate = m.date;
+          const isChannelOrNetwork = m.category === 'networks' || Boolean(m.isChannel) || Boolean(m.is247) || (typeof m.id === 'string' && (m.id.startsWith('cdn_ch_') || m.id.startsWith('dlv_ch_') || m.id.startsWith('sktech_ch_') || m.id.startsWith('vavoo_ch_')));
+          const isEvergreen = isChannelOrNetwork && (rawDate == null || rawDate === '' || /^0+$/.test(String(rawDate).trim()));
+          if (isEvergreen) return { bucket: 2, kickoff: 0 };
+          const kickoff = _parseEventDate(rawDate);
+          if (!kickoff) return { bucket: 3, kickoff: 0 };
+          const LIVE_WINDOW_MS = 14 * 3600 * 1000;
+          if (kickoff <= nowForCarry && nowForCarry <= kickoff + LIVE_WINDOW_MS) return { bucket: 0, kickoff };
+          if (kickoff > nowForCarry) return { bucket: 1, kickoff };
+          return { bucket: 3, kickoff };
+        };
+
         const carried = previous.filter((m) => {
           if (!m || !m.id || presentIds.has(m.id)) return false;
           if (!Array.isArray(m.sources) || !m.sources.some((s) => s && s.source === provider)) return false;
@@ -684,42 +1504,29 @@ class MatchAggregator {
           // the sentinel explicitly, exactly as catalog.getKickoff does, and only
           // then consult the parser.
           const rawDate = m.date;
-          const isEvergreen = rawDate == null || rawDate === '' || /^0+$/.test(String(rawDate).trim());
+          const isChannelOrNetwork = m.category === 'networks' || Boolean(m.isChannel) || Boolean(m.is247) || (typeof m.id === 'string' && (m.id.startsWith('cdn_ch_') || m.id.startsWith('dlv_ch_') || m.id.startsWith('sktech_ch_') || m.id.startsWith('vavoo_ch_')));
+          const isEvergreen = isChannelOrNetwork && (rawDate == null || rawDate === '' || /^0+$/.test(String(rawDate).trim()));
           if (isEvergreen) return true;
           const kickoff = _parseEventDate(rawDate);
-          if (!kickoff) return true;
+          if (!kickoff) return false; // Non-channel fixtures without a kickoff date cannot be evergreen
           return nowForCarry <= kickoff + retentionMs;
-        }).sort((a, b) => {
-          // Classify each entry into a priority bucket so that when the cap
-          // bites, the entries that matter most (live -> upcoming -> evergreen ->
-          // past-but-retained) survive. Without this, .slice() takes array
-          // insertion order and live fixtures at positions 500+ are lost first.
-          const _priority = (m) => {
-            const rawDate = m.date;
-            const isEvergreen = rawDate == null || rawDate === '' || /^0+$/.test(String(rawDate).trim());
-            if (isEvergreen) return { bucket: 2, kickoff: 0 };
-            const kickoff = _parseEventDate(rawDate);
-            if (!kickoff) return { bucket: 2, kickoff: 0 };
-            const LIVE_WINDOW_MS = 14 * 3600 * 1000;
-            if (kickoff <= nowForCarry && nowForCarry <= kickoff + LIVE_WINDOW_MS) return { bucket: 0, kickoff };
-            if (kickoff > nowForCarry) return { bucket: 1, kickoff };
-            return { bucket: 3, kickoff };
-          };
-          const pa = _priority(a);
-          const pb = _priority(b);
-          if (pa.bucket !== pb.bucket) return pa.bucket - pb.bucket;
+        }).map((m) => ({ m, p: _priority(m) })).sort((a, b) => {
+          if (a.p.bucket !== b.p.bucket) return a.p.bucket - b.p.bucket;
           // Within bucket 1 (upcoming) sort soonest-first so the nearest
           // fixtures survive the cap; other buckets keep insertion order (0).
-          if (pa.bucket === 1) return pa.kickoff - pb.kickoff;
+          if (a.p.bucket === 1) return a.p.kickoff - b.p.kickoff;
           return 0;
-        }).slice(0, CARRY_FORWARD_MAX);
+        }).map((d) => d.m).slice(0, CARRY_FORWARD_MAX);
 
         if (carried.length > 0) {
-          activeMatches.push(...carried);
+          // Clone-on-admit: carried rows are live cache objects, and the
+          // backfill/enrichment passes below mutate rows in activeMatches.
+          activeMatches.push(...carried.map(cloneRowForSync));
           console.warn(`[MatchAggregator] ${provider} returned nothing this sync; carried forward ${carried.length} entry(ies) from the previous cache.`);
         } else {
           console.warn(`[MatchAggregator] ${provider} returned nothing this sync and no valid entries were available to carry forward.`);
         }
+        if (this.providerHealthService) this.providerHealthService.recordCarryForward(provider, carried.length);
       }
     } catch (carryErr) {
       console.error('[MatchAggregator] Provider carry-forward failed:', carryErr.message);
@@ -745,7 +1552,13 @@ class MatchAggregator {
         console.log(`[MatchAggregator] Derived competitors for ${backfilled} title-only fixture(s).`);
       }
 
+      // Enrich active fixtures with high-definition 1080p Vavoo broadcast feeds
+      this._enrichMatchesWithBroadcasters(activeMatches);
+
       this.cacheService.setMatches(activeMatches);
+      if (this.providerHealthService) {
+        this.providerHealthService.finishSync({ matchCount: activeMatches.length, succeeded: true });
+      }
 
       if (this.teamLogoService) {
         // Asynchronously enrich live & upcoming matches with team badges without delaying sync
@@ -780,6 +1593,9 @@ class MatchAggregator {
       }
 
       return activeMatches;
+    }
+    if (this.providerHealthService) {
+      this.providerHealthService.finishSync({ matchCount: 0, succeeded: false });
     }
     return null;
   }

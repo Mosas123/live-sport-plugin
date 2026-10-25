@@ -1,10 +1,12 @@
 const container = require('./container');
 const ChannelCountryService = require('./services/ChannelCountryService');
+const ChannelIdentityService = require('./services/ChannelIdentityService');
 const { withRetry, isTransientStatus, isTransientError } = require('./services/retry');
 const { rewriteHlsUri } = require('./services/HlsRewriteService');
 const { parseLanguagePriority, compareStreams } = require('./services/LanguagePriorityService');
 const { BASE_URL } = require('./config');
 const { performance } = require('perf_hooks');
+const SkTechCrypto = require('./resolver/sktech/SkTechCrypto');
 
 // Source selection (shared by handleStream and prewarmMatch)
 function detectChannelCountry(channelName) {
@@ -22,36 +24,166 @@ function isEventStreamSource(src) {
   return false;
 }
 
-function selectSources(matchSources, config) {
+const SOURCE_PRIORITY = {
+  leaf: 1,
+  daddylive: 1,
+  vavoo: 2,
+  sktech: 2,
+  ppvst: 2,
+  damitv: 2,
+  ak47live: 2,
+  golf: 2,
+  delta: 2,
+  echo: 2,
+  replayzone: 2,
+  livetv: 2,
+  soccerfull: 2,
+  basketballvideo: 2,
+  nflvideo: 2,
+  fullraces: 2,
+  hockeyreplays: 2,
+  mlblive: 2,
+  watchfooty: 2,
+  admin: 3,
+  streamedpk: 3,
+  embedindia: 3,
+  embedst: 3,
+  cdnlive: 3,
+  streamsports99: 4,
+  timstreams: 9,
+  streamsports: 13
+};
+
+const VERIFY_BODY_MAX_BYTES = 64 * 1024;
+
+const KNOWN_REPLAY_SOURCES = ['replayzone', 'livetv', 'soccerfull', 'basketballvideo', 'nflvideo', 'fullraces', 'hockeyreplays', 'mlblive'];
+const KNOWN_LIVE_SOURCES = ['ppvst', 'daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'embedindia', 'embedst', 'streamedpk', 'damitv', 'sktech', 'vavoo', 'ak47live', 'leaf'];
+const KNOWN_FALLBACKS = ['ppvst', 'daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'embedindia', 'embedst', 'streamedpk', 'replayzone', 'livetv', 'damitv', 'soccerfull', 'basketballvideo', 'nflvideo', 'fullraces', 'hockeyreplays', 'mlblive', 'sktech', 'vavoo', 'ak47live', 'leaf'];
+
+// Labeling tables hoisted to module scope: they were allocated per request
+// (handleStream) and per formatChannelStreamTitle call.
+const STREAM_SPORT_ICONS = {
+  football: '⚽', cricket: '🏏', motorsport: '🏎️',
+  basketball: '🏀', american_football: '🏈', rugby: '🏉', networks: '📺'
+};
+
+const NICE_NAMES = {
+  vavoo: 'Vavoo',
+  cdnlive: 'CDNLiveTV',
+  watchfooty: 'WatchFooty',
+  daddylive: 'DaddyLive',
+  timstreams: 'TimStreams',
+  streamsports: 'StreamSports',
+  streamsports99: 'StreamSports99',
+  'embedindia': 'Streamed.pk', 'embedst': 'Streamed.pk', 'streamedpk': 'Streamed.pk',
+  'replayzone': 'ReplayZone',
+  'livetv': 'LiveTV',
+  'damitv': 'DamiTV',
+  'ppvst': 'PPV.st',
+  'soccerfull': 'SoccerFull',
+  'sktech': 'SKTech',
+  'basketballvideo': 'BasketballVideo',
+  'nflvideo': 'NFLVideo',
+  'fullraces': 'FullRaces',
+  'hockeyreplays': 'HockeyReplays',
+  'mlblive': 'MLBLive',
+  admin: 'Streamed.pk',
+  echo: 'Streamed.pk',
+  golf: 'Streamed.pk',
+  delta: 'Streamed.pk'
+};
+
+const CHANNEL_TITLE_NICE_NAMES = {
+  daddylive: 'DaddyLive',
+  watchfooty: 'WatchFooty',
+  cdnlive: 'CDNLiveTV',
+  streamsports99: 'StreamSports99',
+  timstreams: 'TimStreams',
+  streamsports: 'StreamSports',
+  embedindia: 'Streamed.pk',
+  embedst: 'Streamed.pk',
+  streamedpk: 'Streamed.pk',
+  replayzone: 'ReplayZone',
+  livetv: 'LiveTV',
+  damitv: 'DamiTV',
+  soccerfull: 'SoccerFull',
+  basketballvideo: 'BasketballVideo',
+  nflvideo: 'NFLVideo',
+  fullraces: 'FullRaces',
+  hockeyreplays: 'HockeyReplays',
+  mlblive: 'MLBLive',
+  sktech: 'SKTech',
+  vavoo: 'Vavoo',
+  ppvst: 'PPV.st',
+  ak47live: 'AK47Live',
+  leaf: 'Leaf'
+};
+
+function isReplaySource(sourceName) {
+  return KNOWN_REPLAY_SOURCES.includes(sourceName);
+}
+
+function selectSources(matchSources, config, match = null) {
   const cleanSources = (matchSources || []).filter(src => !isEventStreamSource(src));
-  const SOURCE_PRIORITY = { admin: 1, echo: 1, golf: 1, delta: 1, 'ppvst': 1, 'daddylive': 1, 'replayzone': 2, 'livetv': 2, 'watchfooty': 2, 'damitv': 3, 'cdnlive': 3, 'streamsports99': 4, 'timstreams': 9, 'streamsports': 13, 'embedindia': 5, 'embedst': 5, 'streamedpk': 5 };
   const sortedSources = [...cleanSources].sort((a, b) => {
     // Unknown sources that are not known fallback providers are likely new
     // Streamed.pk sources - priority 1.5 keeps them near the top.
-    const getPriority = (src) => SOURCE_PRIORITY[src] ?? (['daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'replayzone', 'livetv', 'embedindia', 'embedst', 'streamedpk'].includes(src) ? 99 : 1.5);
+    const getPriority = (src) => SOURCE_PRIORITY[src] ?? (KNOWN_FALLBACKS.includes(src) ? 99 : 1.5);
     const pa = getPriority(a.source);
     const pb = getPriority(b.source);
     if (pa !== pb) return pa - pb;
     return 0;
   });
 
-  if (config && typeof config.sources === 'string' && config.sources !== 'none') {
-    const enabled = config.sources.split(',');
-    // embedindia / embedst / streamedpk are the same embed chain — all three are
-    // controlled by the single 'streamedpk' toggle on the configure page.
-    const KNOWN_FALLBACKS = ['ppvst', 'daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'embedindia', 'embedst', 'streamedpk', 'replayzone', 'livetv', 'damitv'];
+  const checkAllowed = (srcName, enabledList) => {
+    if (srcName.startsWith('yaml_')) return true;
+    if (srcName === 'embedindia' || srcName === 'embedst') return enabledList.includes('streamedpk');
+    return enabledList.includes(srcName);
+  };
+
+  // Case 1: Granular Live and/or Replay sources configuration
+  const hasLiveConfig = config && typeof config.liveSources === 'string';
+  const hasReplayConfig = config && typeof config.replaySources === 'string';
+
+  if (hasLiveConfig || hasReplayConfig) {
+    const liveAllowed = hasLiveConfig && config.liveSources !== 'none'
+      ? config.liveSources.split(',').map(s => s.trim())
+      : (hasLiveConfig && config.liveSources === 'none' ? [] : null);
+
+    const replayAllowed = hasReplayConfig && config.replaySources !== 'none'
+      ? config.replaySources.split(',').map(s => s.trim())
+      : (hasReplayConfig && config.replaySources === 'none' ? [] : null);
+
+    return sortedSources.filter(src => {
+      if (src.source.startsWith('yaml_')) return true;
+      const isReplay = isReplaySource(src.source);
+      if (isReplay) {
+        if (!hasReplayConfig) return KNOWN_FALLBACKS.includes(src.source);
+        if (config.replaySources === 'none') return false;
+        return checkAllowed(src.source, replayAllowed);
+      } else {
+        if (!hasLiveConfig) return KNOWN_FALLBACKS.includes(src.source);
+        if (config.liveSources === 'none') return false;
+        return checkAllowed(src.source, liveAllowed);
+      }
+    });
+  }
+
+  // Case 2: Legacy combined sources configuration (config.sources)
+  if (config && typeof config.sources === 'string') {
+    if (config.sources === 'none') {
+      return sortedSources.filter(src => src.source.startsWith('yaml_'));
+    }
+    const enabled = config.sources.split(',').map(s => s.trim());
     return sortedSources.filter(src => {
       if (src.source.startsWith('yaml_')) return true;
       const isFallback = KNOWN_FALLBACKS.includes(src.source);
       if (!isFallback) return false;
-      // embedindia and embedst are gated by the 'streamedpk' checkbox
-      if (src.source === 'embedindia' || src.source === 'embedst') return enabled.includes('streamedpk');
-      return enabled.includes(src.source);
+      return checkAllowed(src.source, enabled);
     });
   }
 
   // Default path (no config in URL) — allow all known active providers
-  const KNOWN_FALLBACKS = ['ppvst', 'daddylive', 'watchfooty', 'cdnlive', 'streamsports99', 'timstreams', 'streamsports', 'embedindia', 'embedst', 'streamedpk', 'replayzone', 'livetv', 'damitv'];
   return sortedSources.filter(src => {
     if (src.source.startsWith('yaml_')) return true;
     return KNOWN_FALLBACKS.includes(src.source);
@@ -98,6 +230,36 @@ async function dispatchToProvider(sourceName, src, match) {
     resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
   } else if (sourceName === 'ppvst') {
     const provider = container.resolve('ppvStProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'soccerfull') {
+    const provider = container.resolve('soccerFullProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'basketballvideo') {
+    const provider = container.resolve('basketballVideoProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'nflvideo') {
+    const provider = container.resolve('nflVideoProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'fullraces') {
+    const provider = container.resolve('fullRacesProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'hockeyreplays') {
+    const provider = container.resolve('hockeyReplaysProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'mlblive') {
+    const provider = container.resolve('mlbLiveProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'sktech') {
+    const provider = container.resolve('skTechProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'vavoo') {
+    const provider = container.resolve('vavooProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'ak47live') {
+    const provider = container.resolve('ak47LiveProvider');
+    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+  } else if (sourceName === 'leaf') {
+    const provider = container.resolve('leafProvider');
     resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
   } else if (sourceName.startsWith('yaml_')) {
     const yamlProviders = container.resolve('yamlProviders');
@@ -202,6 +364,8 @@ function parseManifestProxyUrl(rawUrl) {
       targetUrl: urlObj.searchParams.get('url') || rawUrl,
       referer: urlObj.searchParams.get('referer') || '',
       origin: urlObj.searchParams.get('origin') || '',
+      cookie: urlObj.searchParams.get('cookie') || '',
+      ua: urlObj.searchParams.get('ua') || '',
     };
   } catch (_) {
     return null;
@@ -263,6 +427,11 @@ async function measureStreamSpeed(stream, manifestUrl, manifestText, referer, or
       stream.targetDuration = info.targetDuration;
     }
     if (!info || !info.firstSegmentUri || !info.firstSegmentDuration) return;
+
+    if (info.firstSegmentUri && /\.image|tiktokcdn|byteoversea|ibytedtos/i.test(info.firstSegmentUri)) {
+      stream.isTikTok = true;
+      stream._isTikTok = true;
+    }
 
     const segmentUrl = buildPlayerSegmentUrl(info.firstSegmentUri, manifestUrl, referer, origin);
     const controller = new AbortController();
@@ -353,6 +522,18 @@ function getSpeedLabel(speedScore) {
   return 'Slow';
 }
 
+function getBitrateLabel(bitrate) {
+  if (!bitrate) return '';
+  if (typeof bitrate === 'string') return bitrate;
+  // Some providers store raw bps; render it as a label so the UI never
+  // shows "1080p · 6200000". Same format as the measured-bitrate label above.
+  const n = Number(bitrate);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return n >= 1000000
+    ? `${(n / 1000000).toFixed(1)} Mbps`
+    : `${Math.round(n / 1000)} kbps`;
+}
+
 
 // --- Stream Health Verification ---
 // Pings each direct stream once and drops dead ones (404/403/5xx, or 200 bodies
@@ -404,7 +585,7 @@ function repairRefererFor(targetUrl) {
 
   if (/\.wfty\.st$/.test(host) || /watchfooty/i.test(host)) return 'https://sportsembed.su/';
   if (/\.strmd\.st$/.test(host) || /streamed/i.test(host)) return 'https://embed.st/';
-  if (/tiestep|dlive|dlstreams|daddylive|assetrage|romponalis/i.test(host) || /\.7odxv0l067ka\.net$/.test(host)) return 'https://assetrage.net/';
+  if (/tiestep|dlive|thedaddy|dlstreams|daddylive|assetrage|romponalis/i.test(host) || /\.7odxv0l067ka\.net$/.test(host)) return 'https://assetrage.net/';
   // Terminal hosts discovered by the DaddyLive iframe-domain audit. These
   // are the endpoints the embed decoders actually point at, so the
   // referer must be the page that served the manifest, not a generic
@@ -421,12 +602,22 @@ function repairRefererFor(targetUrl) {
 async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts = {}) {
 
   const checkedStreams = await Promise.all(streams.map(async (s) => {
-    // We only pre-flight check direct streams (m3u8 urls). Web player links or direct VODs are kept blindly.
-    if (!s.url || s.url.includes('cdnlivetv.tv') || s.url.includes('/watch?') || s.url.includes('.mp4') || s.url.includes('pixeldrain.com') || s.url.includes('okcdn.ru') || (s.behaviorHints && s.behaviorHints.notWebReady === false)) return s;
+    if (!s || !s.url) return null;
+
+    // Filter out broken/dead SprintCDN links (edge*-*-sprintcdn.*) which fail on user devices
+    if (s.url.includes('sprintcdn')) {
+      console.log(`[Filter] Dropped SprintCDN stream (IP/ASN bound): ${s.url}`);
+      return null;
+    }
+
+    // We only pre-flight check direct live streams (m3u8 urls). Web player links or direct VODs are kept blindly.
+    if (s.url.includes('cdnlivetv.tv') || s.url.includes('/watch?') || s.url.includes('.mp4') || s.url.includes('pixeldrain.com') || s.url.includes('okcdn.ru') || s.url.includes('vkuser.net') || s.url.includes('mycdn.me') || s._source === 'hockeyreplays' || (s.behaviorHints && s.behaviorHints.notWebReady === false)) return s;
 
     let targetUrl = s.url;
     let referer = '';
     let origin = '';
+    let cookie = '';
+    let customUa = '';
     // If the stream is routed through our manifest proxy, we extract the true upstream URL to ping
     if (targetUrl.includes('/api/manifest')) {
       const proxyInfo = parseManifestProxyUrl(targetUrl);
@@ -434,25 +625,39 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
         targetUrl = proxyInfo.targetUrl;
         referer = proxyInfo.referer;
         origin = proxyInfo.origin;
+        cookie = proxyInfo.cookie;
+        customUa = proxyInfo.ua;
       }
     }
 
     try {
-      if (!referer && s.behaviorHints && s.behaviorHints.proxyHeaders && s.behaviorHints.proxyHeaders.request) {
-        referer = s.behaviorHints.proxyHeaders.request.Referer || '';
+      const proxyReq = (s.behaviorHints && s.behaviorHints.proxyHeaders && s.behaviorHints.proxyHeaders.request) || {};
+      if (!referer) {
+        referer = proxyReq['Referer'] || proxyReq['referer'] || '';
       }
       if (!origin && referer) {
         try { origin = new URL(referer).origin; } catch (_) {}
       }
+      if (!origin) {
+        origin = proxyReq['Origin'] || proxyReq['origin'] || '';
+      }
+      if (!cookie) {
+        cookie = proxyReq['Cookie'] || proxyReq['cookie'] || '';
+      }
 
       let res;
       let bodySample = '';
+      let bodyTruncated = false;
+
+      const isMp4 = targetUrl.includes('.mp4') || targetUrl.includes('type=4') || (targetUrl.includes('okcdn.ru') && !targetUrl.includes('.m3u8'));
 
       const reqHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'User-Agent': customUa || proxyReq['User-Agent'] || proxyReq['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
         'Referer': referer
       };
       if (origin) reqHeaders['Origin'] = origin;
+      if (cookie) reqHeaders['Cookie'] = cookie;
+      if (isMp4) reqHeaders['Range'] = 'bytes=0-1024';
 
       // A verification ping is one sample of a flaky path: a CDN edge mid-
       // rotation, a reset socket, a 503 under load. Believing that single
@@ -477,8 +682,10 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
                 signal: attemptController.signal,
                 timeoutMs: VERIFY_TIMEOUT_MS,
                 attempts: 1,
+                // Verification only needs a manifest prefix, not an arbitrarily large body.
+                maxBodyBytes: VERIFY_BODY_MAX_BYTES,
               });
-              return { status: r.status, body: await r.text() };
+              return { status: r.status, body: await r.text(), bodyTruncated: r.bodyTruncated === true };
             } finally {
               clearTimeout(attemptTimer);
             }
@@ -496,6 +703,7 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
         );
         res = { status: result.status };
         bodySample = result.body;
+        bodyTruncated = result.bodyTruncated === true;
       } catch (fetchErr) {
         const kind = isTransientError(fetchErr) ? 'unreachable after retries' : 'hard error';
         console.log(`[Filter] Dropped stream (${kind}): ${targetUrl} - ${fetchErr.message}`);
@@ -523,18 +731,22 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
           // the latency of a stream that genuinely refuses this client.
           if (guess && guess !== referer) {
             console.log(`[Filter] ${res.status} with ${referer ? `refused referer ${referer}` : 'no referer'}; retrying once with ${guess}`);
+            const retryHeaders = {
+              'User-Agent': reqHeaders['User-Agent'],
+              'Referer': guess,
+              'Origin': guess.replace(/\/$/, ''),
+            };
+            if (reqHeaders['Cookie']) retryHeaders['Cookie'] = reqHeaders['Cookie'];
             const r2 = await _safeFetch(targetUrl, {
               method: 'GET',
-              headers: {
-                'User-Agent': reqHeaders['User-Agent'],
-                'Referer': guess,
-                'Origin': guess.replace(/\/$/, ''),
-              },
+              headers: retryHeaders,
               timeoutMs: VERIFY_TIMEOUT_MS,
               attempts: 1,
+              maxBodyBytes: VERIFY_BODY_MAX_BYTES,
             });
             res = { status: r2.status };
             bodySample = await r2.text();
+            bodyTruncated = r2.bodyTruncated === true;
             if (res.status === 200) referer = guess; // so a later noteFailure/keep decision is accurate
           }
         } catch (_) { /* fall through to the dead-stream handling below */ }
@@ -557,23 +769,51 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
       }
 
       // Some CDNs (like lb8.strmd.st) return 200 OK with "Not found" when token is expired.
-      // If it doesn't contain #EXT, it's not a valid m3u8 playlist.
-      if (!bodySample.includes('#EXT')) {
+      // If it doesn't contain #EXT or <MPD (for DASH manifests), it's not a valid playlist.
+      const isMpd = targetUrl.includes('.mpd') || bodySample.includes('<MPD') || bodySample.includes('<mpd');
+      if (!isMpd && !isMp4 && !bodySample.includes('#EXT') && !bodyTruncated) {
         console.log(`[Filter] Dropped fake 200 stream (Invalid M3U8 body): ${targetUrl}`);
         if (cacheKey) resolveCache.noteFailure(cacheKey);
         return null;
       }
 
-      // Parse Master Playlist quality, framerate (FPS), and bitrate in real-time
-      const parsedQuality = m3u8Parser.parseManifestText(bodySample);
-      if (parsedQuality) {
-        if (parsedQuality.qualityTag) s.quality = parsedQuality.qualityTag;
-        if (parsedQuality.resolution) s.resolution = parsedQuality.resolution;
-        if (parsedQuality.bitrateTag) s.bitrate = parsedQuality.bitrateTag;
+      // Reject Pluto TV takedown slates ("That's a wrap" / "no longer available on this device" loops)
+      if (/takedownslate|ptv_takedownslates/i.test(bodySample)) {
+        console.log(`[Filter] Dropped Pluto takedown slate: ${targetUrl}`);
+        if (cacheKey) resolveCache.noteFailure(cacheKey);
+        return null;
       }
 
-      if (ENABLE_SPEED_PROBE && !opts.skipSpeedProbe) {
-        await measureStreamSpeed(s, targetUrl, bodySample, referer, origin, m3u8Parser, verifyDeadlineAt);
+      // Parse Master Playlist quality, framerate (FPS), and bitrate in real-time (for HLS)
+      if (!isMpd && !isMp4 && m3u8Parser && typeof m3u8Parser.parseManifestText === 'function') {
+        const parsedQuality = m3u8Parser.parseManifestText(bodySample);
+        if (parsedQuality) {
+          if (parsedQuality.qualityTag) s.quality = parsedQuality.qualityTag;
+          if (parsedQuality.resolution) s.resolution = parsedQuality.resolution;
+          if (parsedQuality.bitrateTag) s.bitrate = parsedQuality.bitrateTag;
+        }
+
+        if (ENABLE_SPEED_PROBE && !opts.skipSpeedProbe && !bodyTruncated) {
+          await measureStreamSpeed(s, targetUrl, bodySample, referer, origin, m3u8Parser, verifyDeadlineAt);
+        }
+      }
+
+      // Detect TikTok CDN / ByteDance proxy-heavy streams (.image fake WebP chunks)
+      const isTikTok = Boolean(
+        s.isTikTok || s._isTikTok ||
+        (bodySample && /tiktokcdn|byteoversea|ibytedtos|byteimg|bytegoofy|cowedd4855ws|bytedance|\.image|tplv-/i.test(bodySample)) ||
+        (targetUrl && /tiktokcdn|byteoversea|ibytedtos|\.image/i.test(targetUrl)) ||
+        (s.url && /tiktokcdn|byteoversea|ibytedtos|\.image/i.test(s.url))
+      );
+      if (isTikTok) {
+        s.isTikTok = true;
+        s._isTikTok = true;
+        try {
+          const streamScorer = container.resolve('streamScorer');
+          if (streamScorer && typeof streamScorer.calculateScore === 'function') {
+            s.score = streamScorer.calculateScore(s, s._source || '');
+          }
+        } catch (_) {}
       }
 
       if (cacheKey) resolveCache.noteSuccess(cacheKey);
@@ -622,11 +862,61 @@ function prewarmSkipProvidersSet() {
   return new Set(raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
 }
 
-async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts = { skipSpeedProbe: true }) {
+function resolveKey(src, matchId) {
+  return require('./services/StreamResolveCache').resolveKey(src, matchId);
+}
+
+// Background prewarming is best-effort work: bound it per worker and drop excess
+// requests rather than allowing an unbounded backlog to compete with playback.
+// Interactive handleStream resolution does not use this scheduler.
+function positiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+const MAX_ACTIVE_PREWARM_MATCHES = positiveIntegerEnv('PREWARM_MAX_CONCURRENT_MATCHES', 2);
+const MAX_QUEUED_PREWARM_MATCHES = positiveIntegerEnv('PREWARM_MAX_QUEUED_MATCHES', 2);
+let activePrewarmMatches = 0;
+const queuedPrewarmMatches = [];
+
+function runScheduledPrewarm(entry) {
+  activePrewarmMatches++;
+  Promise.resolve()
+    .then(entry.task)
+    .then(entry.resolve, (err) => {
+      console.warn('[Prewarm] scheduled task failed:', err && err.message ? err.message : err);
+      entry.resolve();
+    })
+    .finally(() => {
+      activePrewarmMatches--;
+      const next = queuedPrewarmMatches.shift();
+      if (next) runScheduledPrewarm(next);
+    });
+}
+
+function schedulePrewarm(task) {
+  return new Promise((resolve) => {
+    const entry = { task, resolve };
+    if (activePrewarmMatches < MAX_ACTIVE_PREWARM_MATCHES) {
+      runScheduledPrewarm(entry);
+      return;
+    }
+    if (queuedPrewarmMatches.length < MAX_QUEUED_PREWARM_MATCHES) {
+      queuedPrewarmMatches.push(entry);
+      return;
+    }
+    // Never accumulate an unbounded backlog. The next metadata miss or cron
+    // pass can request prewarming again; interactive resolution remains intact.
+    console.info('[Prewarm] skipped: worker prewarm queue is full');
+    resolve();
+  });
+}
+
+async function prewarmMatchNow(match, config, topN = Number.MAX_SAFE_INTEGER, opts = { skipSpeedProbe: true }) {
   try {
     if (!match || !match.sources || !match.sources.length) return;
     const resolveCache = container.resolve('streamResolveCache');
-    const activeSources = selectSources(match.sources, config || null);
+    const activeSources = selectSources(match.sources, config || null, match);
     const skip = prewarmSkipProvidersSet();
     const eligible = skip.size ? activeSources.filter((s) => !skip.has(String(s.source || '').toLowerCase())) : activeSources;
     const targets = eligible.slice(0, topN);
@@ -637,7 +927,7 @@ async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts 
     for (let i = 0; i < targets.length; i += BATCH_SIZE) {
       const batch = targets.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(batch.map(async (src) => {
-        const key = `${src.source}:${match.id}:${src.id}`;
+        const key = resolveKey(src, match.id);
         if (resolveCache.get(key)) return null;
         return resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, config || null, key, options));
       }));
@@ -645,6 +935,12 @@ async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts 
   } catch (err) {
     console.warn('[Prewarm] failed:', err.message);
   }
+}
+
+
+async function prewarmMatch(match, config, topN = Number.MAX_SAFE_INTEGER, opts = { skipSpeedProbe: true }) {
+  if (!match || !match.sources || !match.sources.length) return;
+  return schedulePrewarm(() => prewarmMatchNow(match, config, topN, opts));
 }
 
 
@@ -660,6 +956,126 @@ async function settleBefore(promise, timeoutMs, fallback) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Resolution Deduplication — pure function, exported for direct unit-testing.
+ *
+ * When a provider serves multiple quality variants of the same stream
+ * (e.g. 240p, 360p, 480p, 720p, 1080p), keeps only the highest-resolution
+ * variant to prevent UI clutter and ensure clients play at maximum clarity.
+ * Streams without a recognised resolution tag (Auto HLS, etc.) are kept as-is.
+ *
+ * Mutates `streams` in-place and returns it for convenience.
+ *
+ * @param {Array<Object>} streams - Stremio stream objects with `name` / `title` fields
+ * @returns {Array<Object>}
+ */
+function getVavooClusterKey(s) {
+  if (!s) return 'main';
+  if (s.cluster) return String(s.cluster).toLowerCase();
+  if (s.serverCluster) {
+    const sc = String(s.serverCluster).toLowerCase();
+    if (sc.includes('server c') || sc === 'c') return 'c';
+    if (sc.includes('server s') || sc === 's') return 's';
+    if (sc.includes('server b') || sc === 'b') return 'b';
+    if (sc.includes('hevc')) return 'hevc';
+    if (sc.includes('raw')) return 'raw';
+    if (sc.includes('backup')) return 'backup';
+    return sc;
+  }
+  const text = `${s.title || ''} ${s.channelName || ''} ${s.name || ''} ${s._streamSource || ''}`.toLowerCase();
+  if (/server\s*c|\.c\b/i.test(text)) return 'c';
+  if (/server\s*s|\.s\b/i.test(text)) return 's';
+  if (/server\s*b|\.b\b/i.test(text)) return 'b';
+  if (/\bhevc\b|\bh265\b/i.test(text)) return 'hevc';
+  if (/\braw\b/i.test(text)) return 'raw';
+  return 'main';
+}
+
+function deduplicateResolutions(streams) {
+  const streamGroupMap = new Map();
+  const dedupedStreams = [];
+  const seenUrls = new Set();
+
+  for (const s of streams) {
+    // Quality deduplication applies ONLY to SKTech and Vavoo streams.
+    // NEVER apply to DaddyLive or other multi-mirror providers!
+    const isDaddyLive = s._source === 'daddylive' || /\bdaddylive\b|\bdlhd\b/i.test(`${s.name || ''} ${s.title || ''}`);
+    const isSktech = !isDaddyLive && (s._source === 'sktech' || /\bsk\s*tech\b|\bsktech\b/i.test(`${s.name || ''} ${s.title || ''}`));
+    const isVavoo = !isDaddyLive && (s._source === 'vavoo' || /\bvavoo\b/i.test(`${s.name || ''} ${s.title || ''}`));
+
+    if (!isSktech && !isVavoo) {
+      dedupedStreams.push(s);
+      continue;
+    }
+
+    // Deduplicate identical playback URLs for Vavoo & SKTech
+    if (s.url && seenUrls.has(`${s._source || s.name}:${s.url}`)) {
+      continue;
+    }
+
+    const rawTitle = (s.title || s.name || s.resolution || '').toLowerCase();
+
+    if (isSktech) {
+      const resM = rawTitle.match(/\b(1080p|720p|540p|480p|360p|240p|144p)\b/);
+      if (!resM) {
+        if (s.url) seenUrls.add(`${s._source || s.name}:${s.url}`);
+        dedupedStreams.push(s);
+        continue;
+      }
+      const resTag = resM[1];
+
+      // For SKTech, 720p and 1080p work — drop lower resolutions (540p, 480p, 360p, 240p, 144p)
+      if (resTag !== '1080p' && resTag !== '720p') {
+        continue;
+      }
+
+      // Keep both 1080p and 720p per stream feed, preventing duplicate identical resolutions
+      const baseKey = `sktech:${s.name || ''}:${resTag}:${rawTitle.replace(/\b(1080p|720p|540p|480p|360p|240p|144p)\b/g, '').replace(/[\s\(\)\[\]]+/g, ' ').trim()}`;
+
+      if (!streamGroupMap.has(baseKey)) {
+        streamGroupMap.set(baseKey, s);
+        if (s.url) seenUrls.add(`${s._source || s.name}:${s.url}`);
+        dedupedStreams.push(s);
+      }
+      continue;
+    }
+
+    if (isVavoo) {
+      const resM = rawTitle.match(/\b(4k|uhd|1080p|720p|sd)\b/i);
+      const resTag = resM ? resM[1].toLowerCase() : (s.resolution ? String(s.resolution).toLowerCase() : '1080p');
+      const lang = (s.language || 'default').toLowerCase();
+      // Normalize channel name via ChannelIdentityService so singular/plural brand stems
+      // (e.g. TNT SPORT 1 vs TNT SPORTS 1 vs TNT SPORTS 1 HD) produce the exact same identity key
+      const channelIdent = ChannelIdentityService.parseChannel(s.channelName || s.canonicalChannel || s.title || '');
+      const channelKey = channelIdent.identityKey || 'vavoo_channel';
+      const clusterKey = getVavooClusterKey(s);
+      const baseKey = `vavoo:${channelKey}:${resTag}:${clusterKey}:${lang}`;
+
+      if (streamGroupMap.has(baseKey)) {
+        const existing = streamGroupMap.get(baseKey);
+        // Prefer higher quality or non-backup feed
+        if ((s.score || 0) > (existing.score || 0) || (!s.isBackup && existing.isBackup)) {
+          const idx = dedupedStreams.indexOf(existing);
+          if (idx !== -1) {
+            dedupedStreams[idx] = s;
+            streamGroupMap.set(baseKey, s);
+            if (s.url) seenUrls.add(`${s._source || s.name}:${s.url}`);
+          }
+        }
+        continue;
+      }
+
+      streamGroupMap.set(baseKey, s);
+      if (s.url) seenUrls.add(`${s._source || s.name}:${s.url}`);
+      dedupedStreams.push(s);
+    }
+  }
+
+  streams.length = 0;
+  streams.push(...dedupedStreams);
+  return streams;
 }
 
 async function handleStream(type, id, config) {
@@ -692,16 +1108,72 @@ async function handleStream(type, id, config) {
 
   let candidateSources = match.sources;
   if (!isHubEpisode && episodeIndex && !isNaN(episodeIndex) && episodeIndex > 0) {
-    const isMultiPart = match.sources.some(s => s.name && /(part|half|period)\s*\d+/i.test(s.name));
+    const cleanSources = match.sources.filter(s => s && s.url && !s.source?.includes('timstreams'));
+    // Prioritize dedicated full replay providers and ordered parts over goal clips
+    const getReplaySourceRank = (s) => {
+      const name = (s.name || '').toLowerCase();
+      const prov = s.source || '';
+      if (prov === 'soccerfull' || prov === 'replayzone' || prov === 'fullraces' || prov === 'basketballvideo' || prov === 'nflvideo' || prov === 'hockeyreplays') {
+        if (/part\s*1|1st\s*half|full/i.test(name)) return 1;
+        if (/part\s*2|2nd\s*half/i.test(name)) return 2;
+        return 3;
+      }
+      if (/full\s*match|full\s*replay/i.test(name)) return 4;
+      if (/part\s*1|1st\s*half/i.test(name)) return 5;
+      if (/part\s*2|2nd\s*half/i.test(name)) return 6;
+      if (/highlight/i.test(name)) return 8;
+      if (/\d+:\d+/.test(name)) return 9;
+      return 7;
+    };
+    cleanSources.sort((a, b) => getReplaySourceRank(a) - getReplaySourceRank(b));
+
+    const isMultiPart = cleanSources.length > 1 || cleanSources.some(s => s.name && /(part|half|period|\d+\s*:\s*\d+|highlight|[12](?:st|nd)\s*half)/i.test(s.name));
     if (isMultiPart) {
-      const cleanSources = match.sources.filter(s => s && s.url && !s.source?.includes('timstreams'));
-      if (cleanSources[episodeIndex - 1]) {
-        candidateSources = [cleanSources[episodeIndex - 1]];
+      // Group by provider so a multi-source match (e.g. LiveTV clips + SoccerFull full match page)
+      // retains all providers rather than discarding non-LiveTV providers.
+      const selected = [];
+      const byProvider = new Map();
+      for (const s of cleanSources) {
+        const prov = s.source || 'other';
+        if (!byProvider.has(prov)) byProvider.set(prov, []);
+        byProvider.get(prov).push(s);
+      }
+      for (const [prov, pSources] of byProvider.entries()) {
+        if (pSources.length === 1) {
+          // Single source provider (e.g. SoccerFull match page) contains full match or all parts
+          selected.push(pSources[0]);
+        } else {
+          // Provider with multiple parts/clips: pick the one for this episode
+          if (pSources[episodeIndex - 1]) {
+            selected.push(pSources[episodeIndex - 1]);
+          } else {
+            // Fallback: search for explicit part/half matching episodeIndex
+            const epRegex = new RegExp(`(?:part|half|period)\\s*${episodeIndex}\\b`, 'i');
+            const found = pSources.find(s => s.name && epRegex.test(s.name));
+            if (found) selected.push(found);
+          }
+        }
+      }
+      if (selected.length > 0) {
+        candidateSources = selected;
       }
     }
   }
 
-  const activeSources = selectSources(candidateSources, config);
+  // When match is a replay, strictly restrict to replay-capable providers
+  // (Prevents live feeds or test/demo streams from masquerading as replays)
+  try {
+    const { isReplayMatch } = require('./catalog');
+    if (isReplayMatch(match)) {
+      const REPLAY_SOURCES = new Set(['replayzone', 'livetv', 'soccerfull', 'basketballvideo', 'nflvideo', 'fullraces', 'hockeyreplays', 'mlblive']);
+      const replaySources = candidateSources.filter(s => s && REPLAY_SOURCES.has(s.source));
+      if (replaySources.length > 0) {
+        candidateSources = replaySources;
+      }
+    }
+  } catch (_) {}
+
+  const activeSources = selectSources(candidateSources, config, match);
   const streamScorer = container.resolve('streamScorer');
 
   const resolveCache = container.resolve('streamResolveCache');
@@ -719,8 +1191,9 @@ async function handleStream(type, id, config) {
 
   const inFlight = [];        // per-source promise + settled result for the fallback wait
   const races = activeSources.map((src) => {
-    const key = `${src.source}:${matchId}:${src.id}`;
-    const state = { key, promise: null, settled: false, value: [] };
+    const key = resolveKey(src, matchId);
+    const isPriority1 = src.source === 'daddylive' || SOURCE_PRIORITY[src.source] === 1;
+    const state = { key, source: src.source, isPriority1, promise: null, settled: false, value: [] };
     const promise = resolveCache
       .getOrCreate(key, () => mintVerifiedSources(src, match, config, key))
       .then((minted) => {
@@ -747,21 +1220,37 @@ async function handleStream(type, id, config) {
     if (Array.isArray(r.value.value)) streams.push(...r.value.value);
   }
 
-  // If nothing usable arrived by the soft deadline, spend the remaining hard
-  // budget waiting. Return the completed results once that budget runs out.
-  if (streams.length === 0 && inFlight.length > 0) {
+  // If nothing usable arrived by the soft deadline, OR if priority-1 sources (DaddyLive)
+  // are still in flight, wait for them up to the remaining hard budget.
+  // This guarantees fast streams (e.g. Vavoo) do not cut off DaddyLive with an early return,
+  // while still returning instantly as soon as DaddyLive completes (or when already cached).
+  const priority1InFlight = inFlight.filter(f => f.isPriority1 && !f.settled);
+  const shouldWait = (streams.length === 0 || priority1InFlight.length > 0) && inFlight.length > 0;
+
+  if (shouldWait) {
     const remaining = Math.max(0, HARD_DEADLINE_MS - (Date.now() - resolutionStartedAt));
     if (remaining > 0) {
+      // If we already have streams and are waiting for Priority-1 (DaddyLive), wait specifically
+      // for the Priority-1 promises to complete so we return immediately without stalling.
+      const waitTargets = priority1InFlight.length > 0
+        ? priority1InFlight.map((f) => f.promise)
+        : inFlight.map((f) => f.promise);
+
       await settleBefore(
-        Promise.allSettled(inFlight.map((f) => f.promise)),
+        Promise.allSettled(waitTargets),
         remaining,
         null
       );
     }
     for (const f of inFlight) {
-      // Snapshot only completed resolutions. Awaiting each promise here would
-      // defeat the hard deadline and let a stalled source block the response.
-      if (f.settled) streams.push(...f.value);
+      // Snapshot newly settled resolutions without duplicating
+      if (f.settled && Array.isArray(f.value)) {
+        for (const st of f.value) {
+          if (!streams.includes(st)) {
+            streams.push(st);
+          }
+        }
+      }
     }
     lateCount = inFlight.filter(f => !f.settled).length;
   } else if (lateCount > 0) {
@@ -805,23 +1294,39 @@ async function handleStream(type, id, config) {
   // --- Inject relevant 24/7 channels based on category ---
 
   // Standardize Stream Labels
-  const sportIcons = {
-    football: '⚽', cricket: '🏏', motorsport: '🏎️',
-    basketball: '🏀', american_football: '🏈', rugby: '🏉', networks: '📺'
-  };
-  const icon = sportIcons[match.category] || '📡';
-  
-  const niceNames = {
-    daddylive: 'DaddyLive',
-    timstreams: 'TimStreams',
-    streamsports: 'StreamSports',
-    streamsports99: 'StreamSports99',
-    'embedindia': 'Streamed.pk', 'embedst': 'Streamed.pk', 'streamedpk': 'Streamed.pk',
-    'replayzone': 'ReplayZone',
-    'livetv': 'LiveTV',
-    'damitv': 'DamiTV',
-    'ppvst': 'PPV.st'
-  };
+  const icon = STREAM_SPORT_ICONS[match.category] || '📡';
+
+  // ─── Eliminate DASH (.mpd) & ClearKey DRM streams completely ──────────
+  // ExoPlayer on stock Android apps lacks MediaDrm callbacks, causing black
+  // screen + timer. The addon's own /api/manifest proxy wraps BOTH HLS (.m3u8)
+  // and DASH (.mpd) upstreams, so the proxy URL string is NOT evidence of DASH
+  // — only the wrapped target is. Keying on "/api/manifest" eliminated every
+  // proxied live HLS stream (DaddyLive et al. always proxy), which surfaced as
+  // "no sources except sktech". sktech's DASH feeds are never wanted, so they
+  // are additionally matched on a DASH path/DRM signal.
+  const nonDash = streams.filter(s => {
+    const rawUrl = String(s.url || s.streamUrl || s._rawMpdUrl || '');
+    const lower = rawUrl.toLowerCase();
+    let target = lower;
+    if (lower.includes('/api/manifest')) {
+      try {
+        const info = parseManifestProxyUrl(rawUrl);
+        if (info && info.targetUrl) target = String(info.targetUrl).toLowerCase();
+      } catch (_) {}
+    }
+    const typeIsDash = !!(s.type && String(s.type).toLowerCase().includes('dash'));
+    const genericDash = target.includes('.mpd') || !!s.clearkey || s.format === 'dash' || typeIsDash;
+    // sktech: never serve DASH, even if it is not tagged ClearKey.
+    const isSktechDash = String(s._source || '') === 'sktech' &&
+      (/\.mpd(\?|#|$)/.test(target) || /\/dash\//.test(target) || !!s.clearkey || s.format === 'dash' || typeIsDash);
+    return !(genericDash || isSktechDash);
+  });
+  if (nonDash.length < streams.length) {
+    const droppedCount = streams.length - nonDash.length;
+    streams.length = 0;
+    streams.push(...nonDash);
+    console.log(`[streams.js] Eliminated ${droppedCount} DASH stream(s) for ${matchId}`);
+  }
 
   streams.forEach(s => {
     // Tag proxied manifest URLs with their resolve-cache key (see withResolveKey).
@@ -854,13 +1359,27 @@ async function handleStream(type, id, config) {
     }
 
     const isWeb = !isYouTube && (!!s.externalUrl || s.name === 'Nuvio Web Player');
-    let providerName = niceNames[s._source] || niceNames[Object.keys(niceNames).find(k => s.title && s.title.toLowerCase().includes(k))] || 'Streamed.pk';
-    
-    if (s.title && s.title.toLowerCase().includes('daddylive')) providerName = 'DaddyLive';
-    else if (s.title && s.title.toLowerCase().includes('timstreams')) providerName = 'TimStreams';
-    else if (s.title && s.title.toLowerCase().includes('watchfooty')) providerName = 'WatchFooty';
-    else if (s.title && s.title.toLowerCase().includes('cdnlive')) providerName = 'CDNLiveTV';
-    else if (s.title && s.title.toLowerCase().includes('streamsports99')) providerName = 'StreamSports99';
+    // Fold the title once: the provider-name chain below used to re-lowercase
+    // the same title up to ~16 times per stream.
+    const sTitleLower = (typeof s.title === 'string' && s.title) ? s.title.toLowerCase() : '';
+    let providerName = NICE_NAMES[s._source] ||
+      (s._source ? (s._source.charAt(0).toUpperCase() + s._source.slice(1)) : null) ||
+      NICE_NAMES[Object.keys(NICE_NAMES).find(k => sTitleLower.includes(k))] ||
+      'Streamed.pk';
+
+    if (s._source === 'vavoo' || sTitleLower.includes('vavoo')) providerName = 'Vavoo';
+    else if (s._source === 'cdnlive' || sTitleLower.includes('cdnlive')) providerName = 'CDNLiveTV';
+    else if (s._source === 'watchfooty' || sTitleLower.includes('watchfooty')) providerName = 'WatchFooty';
+    else if (s._source === 'daddylive' || sTitleLower.includes('daddylive')) providerName = 'DaddyLive';
+    else if (s._source === 'timstreams' || sTitleLower.includes('timstreams')) providerName = 'TimStreams';
+    else if (s._source === 'streamsports99' || sTitleLower.includes('streamsports99')) providerName = 'StreamSports99';
+    else if (s._source === 'sktech' || sTitleLower.includes('sk tech') || sTitleLower.includes('sktech')) providerName = 'SKTech';
+    else if (s._source === 'hockeyreplays' || sTitleLower.includes('hockeyreplays')) providerName = 'HockeyReplays';
+    else if (s._source === 'mlblive' || sTitleLower.includes('mlblive')) providerName = 'MLBLive';
+    else if (s._source === 'damitv' || sTitleLower.includes('damitv')) providerName = 'DamiTV';
+    else if (s._source === 'ppvst' || sTitleLower.includes('ppvst')) providerName = 'PPV.st';
+    else if (s._source === 'livetv' || sTitleLower.includes('livetv')) providerName = 'LiveTV';
+    else if (s._source === 'replayzone' || sTitleLower.includes('replayzone')) providerName = 'ReplayZone';
 
     let originalTitle = s.title || '';
     let channelName = '';
@@ -872,7 +1391,9 @@ async function handleStream(type, id, config) {
       const match = originalTitle.match(/\(([^)]+)\)/);
       if (match && match[1]) {
         const inner = match[1];
-        if (!inner.match(/^[0-9]{3,4}p$/i) && inner !== 'Auto' && !inner.toLowerCase().startsWith('stream')) {
+        // Skip resolution/bitrate placeholders and Auto/stream markers — they
+        // are quality tags, not channel names (e.g. Leaf's "(FHD)").
+        if (!/^(?:\d{3,4}p\d{0,2}|sd|hd|fhd|uhd|4k(?:\s+uhd)?|8k)$/i.test(inner) && inner !== 'Auto' && !inner.toLowerCase().startsWith('stream')) {
           channelName = inner;
         }
       } else if (!originalTitle.includes('Stream') && !originalTitle.includes('Auto')) {
@@ -886,57 +1407,127 @@ async function handleStream(type, id, config) {
       s.name = isWeb ? '🌐 Web Stream' : '⚡ Direct Stream';
     }
     
-    let countryTag = '';
-    if (channelName) {
+    const isChannelCard = Boolean(match && (match.category === 'networks' || match.isChannel || match.date === '0' || String(match.id || '').includes('_ch_')));
+    if (isChannelCard && s.canonicalChannel) {
+      channelName = s.canonicalChannel;
+    } else if (!channelName && isChannelCard) {
+      channelName = s.canonicalChannel || s.channelName || (match && match.title) || '';
+    }
+
+    let countryInfo = null;
+    // 1. If stream already has group or explicit country metadata, detect country from it FIRST!
+    if (s.group && !/^(?:live tv|general|channels|networks|other|multi-region)$/i.test(String(s.group).trim())) {
+      countryInfo = detectChannelCountry(s.group);
+    }
+    if (!countryInfo && s.country) {
+      countryInfo = detectChannelCountry(s.country);
+    }
+    // 2. Fall back to stream's specific channelName if available
+    if (!countryInfo && s.channelName) {
+      countryInfo = detectChannelCountry(s.channelName);
+    }
+    // 3. Fall back to normalized channelName / card title
+    if (!countryInfo && channelName) {
       channelName = channelName.trim();
-      const countryInfo = detectChannelCountry(channelName);
-      if (countryInfo) {
-        countryTag = ` ${countryInfo.flag} [${countryInfo.name} • ${countryInfo.language}]`;
-        s.language = countryInfo.language;
-        s.country = countryInfo.name;
+      countryInfo = detectChannelCountry(channelName);
+    }
+    if (!countryInfo) {
+      const fallbackChannel = s.canonicalChannel || s.channelName || (match && match.title) || '';
+      if (fallbackChannel) {
+        countryInfo = detectChannelCountry(fallbackChannel);
       }
     }
-    
+
+    if (countryInfo) {
+      if (!s.language) s.language = countryInfo.language;
+      if (!s.country) s.country = countryInfo.country || countryInfo.name;
+      if (!s.countryCode) s.countryCode = countryInfo.name;
+      if (!s.countryFlag) s.countryFlag = countryInfo.flag;
+    }
+
+    if (channelName) {
+      channelName = channelName
+        .replace(/\s*[-–—]{1,3}\s*(?:Poland|Germany|UK|USA?|France|Spain|Italy|Portugal|Turkey|Netherlands|Canada|Australia|Austria|Switzerland|India|Argentina|Chile|Brazil|[A-Za-z]{2,})\s*$/i, '')
+        .replace(/\s*[-–—]{2,}\s*/g, ' ')
+        .replace(/\s*[–—]\s*/g, ' ')
+        .trim();
+    }
+
+    const flag = s.countryFlag || (countryInfo && countryInfo.flag) || '';
+    const code = s.countryCode || (s.country && s.country.length === 2 ? s.country.toUpperCase() : '') || (countryInfo && countryInfo.name) || (countryInfo && countryInfo.country) || '';
+    const lang = s.language || (countryInfo && countryInfo.language) || '';
+    let countryTag = '';
+    if (code && lang) {
+      countryTag = ` ${flag ? flag + ' ' : ''}[${code} • ${lang}]`;
+    } else if (flag && lang) {
+      countryTag = ` ${flag} [${lang}]`;
+    } else if (flag) {
+      countryTag = ` ${flag}`;
+    }
+
     let partLabel = '';
     const partMatch = originalTitle.match(/(?:^|[\s\[\]])(Part\s*\d+|[12]nd\s*Half|[12]st\s*Half|Full\s*Match|Full\s*Replay|Long\s*Highlights?|Highlights?|\d+:\d+)(?:[\s\]\()]|$)/i);
     if (partMatch) {
       partLabel = partMatch[1].trim();
     }
     if (channelName && (channelName.toLowerCase() === 'direct' || channelName.toLowerCase() === 'browser' || channelName.toLowerCase() === 'ok.ru' || channelName.toLowerCase() === partLabel.toLowerCase())) {
-      channelName = '';
+      channelName = isChannelCard ? (s.canonicalChannel || (match && match.title) || '') : '';
     }
 
-    const partDisplay = partLabel ? ` | 🎬 ${partLabel}` : '';
-    const channelDisplay = channelName ? ` | 📺 ${channelName}${countryTag}` : '';
+    let serverBadge = '';
+    const rawServer = s.serverCluster || s._streamSource || s.streamSource;
+    if (rawServer && typeof rawServer === 'string') {
+      const trimmed = rawServer.trim();
+      if (trimmed) {
+        serverBadge = ` [${trimmed}]`;
+      }
+    }
+
+    const isBackup = Boolean(s.isBackup || s._isBackup || (s.title && /\bbackup\b/i.test(s.title)) || (originalTitle && /\bbackup\b/i.test(originalTitle)));
+    const backupTag = (isBackup && !serverBadge.toLowerCase().includes('backup')) ? ' [Backup]' : '';
+    const isTimeshift = Boolean(s.isTimeshift || s._isTimeshift || (s.title && /(?:\+1|\bdelay\b)/i.test(s.title)) || (originalTitle && /(?:\+1|\bdelay\b)/i.test(originalTitle)));
+    const timeshiftTag = isTimeshift ? ' [+1 Delay]' : '';
+
     const speedLabel = getSpeedLabel(s.speedScore);
     const speedText = speedLabel ? `\n⏱ ${speedLabel}` : '';
-    const bitrateText = s.bitrate ? ` · ${s.bitrate}` : '';
-    s.title = `${icon} ${providerName}${partDisplay}${channelDisplay}\n📺 Quality: ${quality}${bitrateText}${viewersText}${speedText}`;
+    const bitrateLabel = getBitrateLabel(s.bitrate);
+    const bitrateText = bitrateLabel ? ` · ${bitrateLabel}` : '';
+
+    const partDisplay = partLabel ? ` | 🎬 ${partLabel}` : '';
+    const channelDisplay = channelName ? ` | 📺 ${channelName}${countryTag}${backupTag}${timeshiftTag}` : `${backupTag}${timeshiftTag}`;
+    s.title = `${icon} ${providerName}${serverBadge}${partDisplay}${channelDisplay}\n📺 Quality: ${quality}${bitrateText}${viewersText}${speedText}`;
     
     // Add behaviorHints to group streams and handle CORS for direct streams
     s.behaviorHints = s.behaviorHints || {};
     s.behaviorHints.bingeGroup = `nuvio_sport_${matchId}`;
     
-    // If it's a direct m3u8 stream and not routed through our proxy, mark it notWebReady
-    if (s.url && s.url.includes('.m3u8') && !s.url.includes('/api/manifest')) {
-      s.behaviorHints.notWebReady = true;
-      
-      let referer = '';
-      if (providerName === 'DaddyLive') referer = 'https://dlive.sx/';
-      else if (providerName === 'Streamed.pk') referer = 'https://embed.st/';
-      else if (providerName === 'WatchFooty') referer = (s.url && s.url.includes('.wfty.st')) ? 'https://sportsembed.su/' : 'https://watchfooty.st/';
-      else if (providerName === 'CDNLiveTV') referer = 'https://cdnlivetv.tv/';
-      else if (providerName === 'StreamSports99' || providerName === 'StreamSports') referer = 'https://streamsports99.fun/';
-      else if (providerName === 'DamiTV') referer = 'https://damitv.st/';
-      
-      if (referer) {
-        if (!s.behaviorHints.proxyHeaders) {
-          s.behaviorHints.proxyHeaders = {
-            request: {
-              "Referer": referer,
-              "Origin": referer
-            }
-          };
+    // Live streams must never be marked notWebReady: true; Stremio 5 /hlsv2 transcoder crashes on live media.
+    if (s.url && s.url.includes('.m3u8')) {
+      s.behaviorHints.notWebReady = false;
+      if (s.url.includes('/api/manifest')) {
+        if (s.behaviorHints.proxyHeaders) {
+          delete s.behaviorHints.proxyHeaders;
+        }
+      } else {
+        // Direct unproxied m3u8 stream needing player-level header injection
+        let referer = '';
+        if (providerName === 'DaddyLive') referer = 'https://thedaddy.pk/';
+        else if (providerName === 'Streamed.pk') referer = 'https://embed.st/';
+        else if (providerName === 'WatchFooty') referer = (s.url && s.url.includes('.wfty.st')) ? 'https://sportsembed.su/' : 'https://watchfooty.st/';
+        else if (providerName === 'CDNLiveTV') referer = 'https://cdnlivetv.tv/';
+        else if (providerName === 'StreamSports99' || providerName === 'StreamSports') referer = 'https://streamsports99.fun/';
+        else if (providerName === 'DamiTV') referer = 'https://damitv.st/';
+        else if (providerName === 'Vavoo') referer = 'https://vavoo.to/';
+        
+        if (referer) {
+          if (!s.behaviorHints.proxyHeaders) {
+            s.behaviorHints.proxyHeaders = {
+              request: {
+                "Referer": referer,
+                "Origin": referer
+              }
+            };
+          }
         }
       }
     }
@@ -972,6 +1563,9 @@ async function handleStream(type, id, config) {
       streams.push(...nonWeb);
     }
   }
+
+  // ─── Resolution Deduplication: Suppress redundant lower-bitrate variants ──
+  deduplicateResolutions(streams);
 
   // Ordering is: direct stream, then language rank, then rankScore.
   // Language rank is English (always first) -> the languages the user listed in
@@ -1029,6 +1623,42 @@ function isLikelyPerTeamChannel(stream) {
 }
 
 // Keep every non-team-channel stream; keep team channels only once the fixture
+/**
+ * Formats a clean, explicit stream label for 24/7 channels:
+ * Provider | Channel — Country [Flag] — Language — Quality [Backup] [+1 Delay]
+ */
+function formatChannelStreamTitle(s, match, providerNameOverride, countryInfo, qualityOverride, channelNameOverride, originalTitleOverride) {
+  const niceNames = CHANNEL_TITLE_NICE_NAMES;
+
+  const srcKey = s._source || s.sourceName || (s.name && s.name.toLowerCase());
+  let providerName = providerNameOverride || niceNames[srcKey] ||
+    (srcKey ? (srcKey.charAt(0).toUpperCase() + srcKey.slice(1)) : null) ||
+    'Stream';
+  if (srcKey === 'vavoo' || (s.title && s.title.toLowerCase().includes('vavoo'))) providerName = 'Vavoo';
+  else if (srcKey === 'cdnlive' || (s.title && s.title.toLowerCase().includes('cdnlive'))) providerName = 'CDNLiveTV';
+  else if (srcKey === 'daddylive' || (s.title && s.title.toLowerCase().includes('daddylive'))) providerName = 'DaddyLive';
+  else if (srcKey === 'sktech' || (s.title && s.title.toLowerCase().includes('sk tech')) || (s.title && s.title.toLowerCase().includes('sktech'))) providerName = 'SKTech';
+
+  const origTitle = originalTitleOverride !== undefined ? originalTitleOverride : (s.title || '');
+  let displayChName = s.canonicalChannel || s.channelName || (match && match.title) || channelNameOverride || 'Live Channel';
+  displayChName = displayChName
+    .replace(/\s*[-–—]{1,3}\s*(?:Poland|Germany|UK|USA?|France|Spain|Italy|Portugal|Turkey|Netherlands|Canada|Australia|Austria|Switzerland|India|Argentina|Chile|Brazil|[A-Za-z]{2,})\s*$/i, '')
+    .replace(/\s*[-–—]{2,}\s*/g, ' ')
+    .replace(/\s*[–—]\s*/g, ' ')
+    .trim() || displayChName;
+  const displayCountry = s.country || s.countryName || (countryInfo && (countryInfo.country || countryInfo.name)) || (s.countryCode ? s.countryCode : '');
+  const displayFlag = s.countryFlag || (countryInfo && countryInfo.flag) || '';
+  const displayCountryPart = displayCountry ? ` — ${displayCountry}${displayFlag ? ' ' + displayFlag : ''}` : '';
+  const displayLanguage = s.language || (countryInfo && countryInfo.language) || 'English';
+  const displayQuality = qualityOverride || s.quality || s.resolution || 'HD';
+  const isBackup = Boolean(s.isBackup || s._isBackup || (s.title && /\bbackup\b/i.test(s.title)) || (origTitle && /\bbackup\b/i.test(origTitle)));
+  const backupTag = isBackup ? ' [Backup]' : '';
+  const isTimeshift = Boolean(s.isTimeshift || s._isTimeshift || (s.title && /(?:\+1|\bdelay\b)/i.test(s.title)) || (origTitle && /(?:\+1|\bdelay\b)/i.test(origTitle)));
+  const timeshiftTag = isTimeshift ? ' [+1 Delay]' : '';
+
+  return `${providerName} | ${displayChName}${displayCountryPart} — ${displayLanguage} — ${displayQuality}${backupTag}${timeshiftTag}`;
+}
+
 // is genuinely under way (or inside its normal pre-kickoff lead window).
 // Returns the SAME array reference when nothing needs changing, so callers must
 // not assume it is a fresh array.
@@ -1051,6 +1681,7 @@ function suppressPreMatchTeamChannels(streams, match) {
 module.exports = {
   handleStream,
   prewarmMatch,
+  resolveKey,
   prewarmSkipProvidersSet,
   selectSources,
   // Exported so the manifest proxy can transparently re-mint a single expired
@@ -1058,5 +1689,11 @@ module.exports = {
   resolveSource,
   // Exported for tests: the retry/keep/drop policy is the part worth pinning
   // down, and driving it through handleStream would need the whole match cache.
-  verifyStreams
+  verifyStreams,
+  // Exported for direct unit testing of the resolution deduplication algorithm
+  // without requiring a live container / IoC / match-cache setup.
+  deduplicateResolutions,
+  formatChannelStreamTitle,
+  KNOWN_LIVE_SOURCES,
+  KNOWN_REPLAY_SOURCES
 };
