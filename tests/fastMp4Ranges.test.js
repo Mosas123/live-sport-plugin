@@ -97,3 +97,60 @@ test('blocked target stops before the first probe', async () => {
   const r = await run(); expect(guard.rejectBlockedUrl).toHaveBeenCalledWith(r, verdict, 'FastMP4');
   expect(global.fetch).not.toHaveBeenCalled();
 });
+
+
+function holdFirstDataWindow() {
+  let entered;
+  let releaseWindow;
+  const started = new Promise(resolve => { entered = resolve; });
+
+  global.fetch = jest.fn(async (_url, options) => {
+    if (options.headers.Range === 'bytes=0-0') {
+      return response(206, 'bytes 0-0/10', 'a');
+    }
+    await new Promise((resolve, reject) => {
+      const signal = options.signal;
+      const onAbort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      signal.addEventListener('abort', onAbort, { once: true });
+      releaseWindow = () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      entered(signal);
+    });
+    return response(206, 'bytes 0-3/10', 'abcd');
+  });
+  return { started, release: () => releaseWindow?.() };
+}
+
+test('normal IncomingMessage close does not cancel a pending ranged transfer', async () => {
+  const fixture = holdFirstDataWindow();
+  const request = req('bytes=0-3');
+  const output = res();
+  const processing = handle(request, output);
+  const signal = await fixture.started;
+
+  // Node may emit req.close when the GET has been fully received, even while
+  // its outbound response is still streaming.
+  request.emit('close');
+  expect(signal.aborted).toBe(false);
+
+  fixture.release();
+  await processing;
+  expect(output.ended).toBe(true);
+  expect(output.destroyed).toBe(false);
+  expect(Buffer.concat(output.chunks).toString()).toBe('abcd');
+});
+
+test('premature response close cancels outstanding upstream range fetches', async () => {
+  const fixture = holdFirstDataWindow();
+  const output = res();
+  const processing = handle(req('bytes=0-3'), output);
+  const signal = await fixture.started;
+
+  output.emit('close');
+  expect(signal.aborted).toBe(true);
+  await processing;
+  expect(output.ended).toBe(false);
+  expect(global.fetch).toHaveBeenCalledTimes(2);
+});
