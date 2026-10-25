@@ -345,17 +345,85 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
     };
   }
 
+  async function guardedImpitFetch() {
+    let currentUrl = url;
+    let currentMethod = method;
+    let currentHeaders = { ...(headers || {}) };
+    let currentBody = body;
+    for (let hop = 0; ; hop++) {
+      let verdict;
+      try {
+        verdict = await opts.validateRedirect(currentUrl);
+      } catch (cause) {
+        const error = new Error('Outbound URL validation failed');
+        error.code = 'EOUTBOUNDURLBLOCKED';
+        error.statusCode = 403;
+        error.cause = cause;
+        throw error;
+      }
+      if (!verdict || verdict.ok !== true) {
+        const error = new Error('Blocked outbound URL: ' + (verdict && verdict.reason || 'validation_failed'));
+        error.code = 'EOUTBOUNDURLBLOCKED';
+        error.statusCode = 403;
+        error.outboundUrlVerdict = verdict || null;
+        throw error;
+      }
+
+      const remainingMs = Math.ceil(deadlineAt - performance.now());
+      if (remainingMs <= 0) {
+        throw Object.assign(new Error(`safeFetch timeout ${timeoutMs}ms (redirect chain)`), { name: 'TimeoutError', code: 'ETIMEDOUT' });
+      }
+      const res = await impit.fetch(currentUrl, {
+        method: currentMethod,
+        headers: currentHeaders,
+        body: currentBody,
+        signal,
+        timeout: remainingMs,
+        redirect: 'manual',
+      });
+      const isRedirect = [301, 302, 303, 307, 308].includes(res.status);
+      if (!isRedirect || hop >= MAX_REDIRECT_HOPS) return res;
+      const rawLocation = res.headers && typeof res.headers.get === 'function'
+        ? res.headers.get('location')
+        : res.headers && (res.headers.location || res.headers.Location);
+      if (!rawLocation) return res;
+
+      try { await res.body?.cancel?.(); } catch (_) {}
+      let nextUrl;
+      try { nextUrl = new URL(rawLocation, currentUrl); } catch (_) { return res; }
+      if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+        const error = new Error('Blocked outbound redirect protocol');
+        error.code = 'EOUTBOUNDURLBLOCKED';
+        error.statusCode = 403;
+        throw error;
+      }
+
+      if (new URL(currentUrl).origin !== nextUrl.origin) {
+        const sensitive = new Set(['authorization', 'cookie', 'cookie2', 'proxy-authorization', 'host']);
+        currentHeaders = Object.fromEntries(Object.entries(currentHeaders).filter(([key]) => !sensitive.has(key.toLowerCase())));
+      }
+      if (currentMethod !== 'HEAD' && res.status !== 307 && res.status !== 308) {
+        currentMethod = 'GET';
+        currentBody = undefined;
+        currentHeaders = Object.fromEntries(Object.entries(currentHeaders).filter(([key]) => key.toLowerCase() !== 'content-length'));
+      }
+      currentUrl = nextUrl.toString();
+    }
+  }
+
   // -- Path A: impit ---------------------------------------------------------
-  if (impit && typeof opts.validateRedirect !== 'function') {
+  if (impit) {
     let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // The caller gave up (deadline hit upstream); stop burning its budget.
       if (signal.aborted) throw signal.reason;
       try {
-        const res = await impit.fetch(url, {
-          method, headers, body, signal,
-          timeout: Math.max(1, Math.ceil(deadlineAt - performance.now())),
-        });
+        const res = typeof opts.validateRedirect === 'function'
+          ? await guardedImpitFetch()
+          : await impit.fetch(url, {
+            method, headers, body, signal,
+            timeout: Math.max(1, Math.ceil(deadlineAt - performance.now())),
+          });
         const { buffer: buf, truncated: bodyTruncated } = Number.isSafeInteger(opts.maxBodyBytes) && opts.maxBodyBytes > 0
           ? await readLimitedBody(res.body, opts.maxBodyBytes)
           : { buffer: await res.arrayBuffer(), truncated: false };
@@ -403,6 +471,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
         };
       } catch (impitErr) {
         if (signal.aborted) throw signal.reason || impitErr;
+        if (impitErr && impitErr.code === 'EOUTBOUNDURLBLOCKED') throw impitErr;
         lastErr = impitErr;
         const errMsg = String(impitErr);
         if (isTlsValidationError(errMsg)) {
