@@ -77,6 +77,18 @@ describe('DashToHlsService (zero-bandwidth DASH→HLS converter)', () => {
     });
   });
 
+  test('bounds materialized segments for very large SegmentTimeline repeats', () => {
+    const xml = `<MPD type="static"><Period><AdaptationSet mimeType="video/mp4"><Representation id="v" bandwidth="1000"><SegmentTemplate media="seg-$Number$.m4s" startNumber="1"><SegmentTimeline><S t="0" d="1" r="1000000"/></SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period></MPD>`;
+    const svc = new DashToHlsService({});
+    const parsed = svc.parseMpd(xml, 'https://example.com/manifest.mpd');
+    const segments = parsed.videoReps[0].segments;
+
+    expect(segments).toHaveLength(15);
+    expect(segments[0].number).toBe(999987);
+    expect(segments[14].number).toBe(1000001);
+    expect(segments[0].url).toContain('seg-999987.m4s');
+  });
+
   describe('HLS rendering', () => {
     const reqBase = 'http://192.168.1.50:7000';
     const dRaw = Buffer.from(JSON.stringify(makePayload(NITRO_MPD_URL))).toString('base64url');
