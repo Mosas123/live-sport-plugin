@@ -145,3 +145,39 @@ describe('impitClient.safeFetch — undici fallback follows redirects', () => {
     expect(res.status).toBe(200);
   });
 });
+
+
+describe('impitClient.safeFetch — outbound URL validation on every redirect hop', () => {
+  test('validates the initial URL and every redirect target before requesting it', async () => {
+    const seen = [];
+    const validateRedirect = jest.fn(async (url) => {
+      seen.push(url);
+      if (url.includes('private.example')) return { ok: false, reason: 'blocked_address' };
+      return { ok: true, url, addresses: ['93.184.216.34'] };
+    });
+    request
+      .mockResolvedValueOnce(redirectResponse(302, 'https://private.example/metadata'));
+
+    await expect(safeFetch('https://public.example/playlist.m3u8', {
+      attempts: 1,
+      validateRedirect,
+    })).rejects.toMatchObject({ code: 'EOUTBOUNDURLBLOCKED', statusCode: 403 });
+
+    expect(validateRedirect).toHaveBeenCalledTimes(2);
+    expect(seen).toEqual([
+      'https://public.example/playlist.m3u8',
+      'https://private.example/metadata',
+    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0][0]).toBe('https://public.example/playlist.m3u8');
+  });
+
+  test('does not use automatic impit redirects when a validator is supplied', async () => {
+    const validateRedirect = jest.fn(async (url) => ({ ok: true, url, addresses: ['93.184.216.34'] }));
+    request.mockResolvedValueOnce(bodyResponse(200, PLAYLIST));
+    const res = await safeFetch(PRIMARY, { attempts: 1, validateRedirect });
+    expect(res.ok).toBe(true);
+    expect(validateRedirect).toHaveBeenCalledWith(PRIMARY);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+});

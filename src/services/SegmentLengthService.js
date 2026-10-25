@@ -1,6 +1,7 @@
 'use strict';
 
 const { safeFetch } = require('../impitClient');
+const { checkOutboundUrl } = require('./OutboundUrlGuard');
 
 const MAX_CACHE_SIZE = 5000;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour TTL for immutable chunk lengths
@@ -147,7 +148,8 @@ class SegmentLengthService {
           method: 'GET',
           headers: { ...headers, Range: 'bytes=0-0' },
           timeoutMs: 4000,
-          attempts: 1
+          attempts: 1,
+          validateRedirect: checkOutboundUrl,
         });
         const rangedTotal = ranged && ranged.headers ? this._totalLengthFromHeaders(ranged.headers) : 0;
         if (rangedTotal > CLOAKED_PREFIX_BYTES) {
@@ -158,7 +160,10 @@ class SegmentLengthService {
         }
 
         // HEAD fallback for CDNs that allow it (Content-Length = full object).
-        const head = await safeFetch(segmentUrl, { method: 'HEAD', headers, timeoutMs: 4000, attempts: 1 });
+        const head = await safeFetch(segmentUrl, {
+          method: 'HEAD', headers, timeoutMs: 4000, attempts: 1,
+          validateRedirect: checkOutboundUrl,
+        });
         const headTotal = head && head.headers ? this._totalLengthFromHeaders(head.headers) : 0;
         if (headTotal > CLOAKED_PREFIX_BYTES) {
           const videoBytes = headTotal - CLOAKED_PREFIX_BYTES;

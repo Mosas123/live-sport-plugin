@@ -3,6 +3,8 @@
 const express = require('express');
 const router = express.Router();
 const byteRangeSigner = require('../services/ByteRangeSigner');
+const net = require('net');
+const { classifyAddress, isReservedHostname } = require('../services/OutboundUrlGuard');
 
 /**
  * GET /api/hls/resource/:token/media.ts
@@ -31,6 +33,22 @@ function handleSegmentRedirect(req, res) {
   const payload = byteRangeSigner.verifySegmentToken(token, psig);
   if (!payload || !payload.url) {
     return res.status(403).send('Invalid or expired signature');
+  }
+
+  // Tokens are signed, but reject malformed or local destinations before issuing a redirect.
+  let destination;
+  try {
+    destination = new URL(payload.url);
+  } catch (_) {
+    return res.status(403).send('Invalid redirect destination');
+  }
+  if (destination.protocol !== 'http:' && destination.protocol !== 'https:') {
+    return res.status(403).send('Invalid redirect protocol');
+  }
+  let hostname = destination.hostname.toLowerCase();
+  if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
+  if (!hostname || isReservedHostname(hostname) || ((net.isIP(hostname) !== 0) && classifyAddress(hostname))) {
+    return res.status(403).send('Blocked redirect destination');
   }
 
   // Set CORS headers so browser-based Hls.js clients can read headers

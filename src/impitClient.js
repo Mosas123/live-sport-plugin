@@ -346,7 +346,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
   }
 
   // -- Path A: impit ---------------------------------------------------------
-  if (impit) {
+  if (impit && typeof opts.validateRedirect !== 'function') {
     let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // The caller gave up (deadline hit upstream); stop burning its budget.
@@ -433,7 +433,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
   // before this line is reached. A `const` arrow would sit in the temporal
   // dead zone there, and the ReferenceError would be swallowed by that
   // branch's catch, silently disabling the fallback.
-  async function undiciPath(method, headers, body, url, signal, timeoutMs) {
+  async function undiciPath(method, headers, body, url, signal, timeoutMs, validateRedirect) {
 
   // -- Path B: undici --------------------------------------------------------
   // undici.request() does NOT follow redirects the way fetch/impit do. Several
@@ -453,6 +453,25 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
   let currentUrl = url;
   let res;
   for (let hop = 0; ; hop++) {
+    if (typeof validateRedirect === 'function') {
+      let verdict;
+      try {
+        verdict = await validateRedirect(currentUrl);
+      } catch (cause) {
+        const error = new Error('Outbound URL validation failed');
+        error.code = 'EOUTBOUNDURLBLOCKED';
+        error.statusCode = 403;
+        error.cause = cause;
+        throw error;
+      }
+      if (!verdict || verdict.ok !== true) {
+        const error = new Error('Blocked outbound URL: ' + (verdict && verdict.reason || 'validation_failed'));
+        error.code = 'EOUTBOUNDURLBLOCKED';
+        error.statusCode = 403;
+        error.outboundUrlVerdict = verdict || null;
+        throw error;
+      }
+    }
     const remainingMs = Math.ceil(deadlineAt - performance.now());
     if (remainingMs <= 0) throw Object.assign(new Error(`safeFetch timeout ${timeoutMs}ms (redirect chain)`), { name: 'TimeoutError', code: 'ETIMEDOUT' });
     res = await undiciRequest(currentUrl, {
@@ -508,7 +527,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
   };
   };
 
-  return undiciPath(method, headers, body, url, signal, timeoutMs);
+  return undiciPath(method, headers, body, url, signal, timeoutMs, opts.validateRedirect);
 }
 
 /**

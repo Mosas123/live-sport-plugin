@@ -7,6 +7,7 @@
 const container = require('./container');
 
 const { safeFetch: _safeFetch } = require('./impitClient');
+const { checkOutboundUrl } = require('./services/OutboundUrlGuard');
 
 // ─── Manifest proxy: short-TTL cache + request coalescing ───────────────────
 // Live HLS players reload /api/manifest every 2-6 s per viewer. A validated
@@ -85,7 +86,7 @@ function playlistHasContent(text) {
 
 // Fetch + validate the upstream manifest. Throws on failure so coalesced
 // waiters share the same outcome; successful bodies are cached by the caller.
-async function fetchUpstreamManifest(targetUrl, referer, origin) {
+async function fetchUpstreamManifest(targetUrl, referer, origin, options = {}) {
   const deadlineAt = performance.now() + 10000;
   const isVavoo = Boolean(
     (targetUrl && (targetUrl.includes('/sunshine/') || targetUrl.includes('vavoo.') || targetUrl.includes(':8008'))) ||
@@ -105,7 +106,11 @@ async function fetchUpstreamManifest(targetUrl, referer, origin) {
   const attempt = async () => {
     const remainingMs = Math.ceil(deadlineAt - performance.now());
     if (remainingMs <= 0) throw Object.assign(new Error('Manifest timeout 10000ms'), { name: 'TimeoutError', code: 'ETIMEDOUT' });
-    const result = await _safeFetch(targetUrl, { headers, timeoutMs: remainingMs });
+    const result = await _safeFetch(targetUrl, {
+      headers,
+      timeoutMs: remainingMs,
+      validateRedirect: options.validateRedirect || checkOutboundUrl,
+    });
     if (!result.ok) {
       // Carry the upstream status so the caller can tell "the token/CDN said no"
       // apart from "our proxy is broken" — they need different HTTP responses.
