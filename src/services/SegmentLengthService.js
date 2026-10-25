@@ -22,6 +22,10 @@ class SegmentLengthService {
   constructor(opts = {}) {
     this.maxSize = opts.maxSize || MAX_CACHE_SIZE;
     this.autoProbe = opts.autoProbe !== false;
+    this.maxConcurrentProbes = Number.isSafeInteger(opts.maxConcurrentProbes) && opts.maxConcurrentProbes > 0
+      ? opts.maxConcurrentProbes
+      : 4;
+    this.activeProbes = 0;
     this.cache = new Map(); // url -> { length, expiresAt }
     this.inFlightProbes = new Map(); // url -> Promise<number|null>
     this.probeFailures = new Map(); // url -> timestamp of last failed probe
@@ -123,6 +127,14 @@ class SegmentLengthService {
       return this.inFlightProbes.get(segmentUrl);
     }
 
+    // Segment probes are best-effort background work. Do not queue unlimited
+    // distinct URLs when concurrent manifests are rewritten; callers can use
+    // the existing estimated length and a later playlist cycle can retry.
+    if (this.activeProbes >= this.maxConcurrentProbes) {
+      return null;
+    }
+    this.activeProbes++;
+
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
       'Referer': opts.referer || 'https://embed.st/',
@@ -168,6 +180,7 @@ class SegmentLengthService {
       return null;
     })().finally(() => {
       this.inFlightProbes.delete(segmentUrl);
+      this.activeProbes = Math.max(0, this.activeProbes - 1);
     });
 
     this.inFlightProbes.set(segmentUrl, probePromise);
