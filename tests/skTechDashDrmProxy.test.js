@@ -1,5 +1,22 @@
 'use strict';
 
+jest.mock('../src/services/OutboundUrlGuard', () => {
+  const actual = jest.requireActual('../src/services/OutboundUrlGuard');
+  return {
+    ...actual,
+    checkOutboundUrl: jest.fn(async (rawUrl, options) => {
+      try {
+        const parsed = new URL(rawUrl);
+        // Loopback is used only for the isolated local HTTP fixtures in this test.
+        if (parsed.hostname === '127.0.0.1') {
+          return { ok: true, url: parsed.toString(), hostname: parsed.hostname, addresses: [parsed.hostname] };
+        }
+      } catch (_) {}
+      return actual.checkOutboundUrl(rawUrl, options);
+    }),
+  };
+});
+
 const http = require('http');
 const express = require('express');
 const SkTechCrypto = require('../src/resolver/sktech/SkTechCrypto');
