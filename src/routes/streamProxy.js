@@ -248,9 +248,10 @@ router.get('/api/fastmp4', async (req, res) => {
 
   if (req.method === 'HEAD') return res.end();
 
-  // Ordered parallel fetch.
+  // Ordered parallel fetch. IncomingMessage 'close' also fires when a
+  // normally completed request body is read; only the response lifecycle
+  // reliably identifies a disconnected streaming client.
   const ac = new AbortController();
-  req.on('close', () => { try { ac.abort(); } catch (_) {} });
 
   const pending = new Map(); // seq -> Promise<Buffer>
   let nextOffset = start;
@@ -272,7 +273,12 @@ router.get('/api/fastmp4', async (req, res) => {
   };
 
   let aborted = false;
-  res.on('close', () => { aborted = true; try { ac.abort(); } catch (_) {} });
+  const onResponseClose = () => {
+    if (res.writableFinished) return;
+    aborted = true;
+    ac.abort();
+  };
+  res.once('close', onResponseClose);
 
   try {
     for (let i = 0; i < concurrency; i++) launch();
@@ -311,6 +317,7 @@ router.get('/api/fastmp4', async (req, res) => {
       res.status(502).type('text').send('Upstream range failed');
     } else res.destroy(); // a truncated transfer must not look complete
   } finally {
+    res.removeListener('close', onResponseClose);
     ac.abort(); // stop queued siblings after a failed window or completed response
   }
 });
