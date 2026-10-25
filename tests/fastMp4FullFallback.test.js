@@ -28,6 +28,13 @@ test.each(['bytes=2-5', 'bytes=900-', 'bytes=-3', 'bytes=0-1,8-9', undefined])('
   expect(r.headers['content-length']).toBe('10'); expect(Buffer.concat(r.chunks).toString()).toBe(payload);
   expect(global.fetch).toHaveBeenCalledTimes(1);
 });
+test('valid application/mp4 full response is accepted', async () => {
+  const r = await run(full(payload, { 'content-length': '10', 'content-type': 'application/mp4; codecs="avc1"' }));
+  expect(r.code).toBe(200);
+  expect(r.headers['content-type']).toBe('application/mp4; codecs="avc1"');
+  expect(Buffer.concat(r.chunks).toString()).toBe(payload);
+  expect(global.fetch).toHaveBeenCalledTimes(1);
+});
 test('unknown-length 200 streams without inventing Content-Length', async () => {
   const r = await run(full()); expect(r.code).toBe(200); expect(r.headers['content-length']).toBeUndefined();
   expect(Buffer.concat(r.chunks).toString()).toBe(payload); expect(global.fetch).toHaveBeenCalledTimes(1);
