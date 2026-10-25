@@ -185,6 +185,11 @@ router.get('/api/manifest', async (req, res) => {
     res.setHeader('X-Manifest-Cache', 'MISS');
     res.send(finalBody);
   } catch (err) {
+    // A security rejection is not evidence that the provider stream is dead.
+    // Do not poison the negative cache or trigger resolver failure handling.
+    if (err && err.code === 'EOUTBOUNDURLBLOCKED') {
+      return res.status(403).send('Blocked outbound URL');
+    }
     // Preserve the old 404 semantics so players can fail over to another stream.
     // Failures are negatively cached (15 s) so player polls stop hammering the dead upstream.
     // In parallel, drop the originating resolve-cache entry so the next click mints fresh.
@@ -516,6 +521,9 @@ async function handleDashManifestProxy(req, res) {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     return res.send(mpd);
   } catch (err) {
+    if (err && err.code === 'EOUTBOUNDURLBLOCKED') {
+      return res.status(403).send('Blocked outbound URL');
+    }
     console.error('[ManifestProxy] DASH error:', err.message);
     return res.status(502).send('Manifest proxy error: ' + err.message);
   }
