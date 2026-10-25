@@ -134,7 +134,7 @@ async function streamFullResponse(response, req, res, signal) {
     try { await response.body?.cancel(); } catch (_) {}
     throw new Error('invalid full-response metadata');
   }
-  if (!/^(?:video\/[a-z0-9.+-]+|application\/octet-stream)(?:\s*;|$)/i.test(contentType)) {
+  if (!/^(?:video\/[a-z0-9.+-]+|application\/(?:mp4|octet-stream))(?:\s*;|$)/i.test(contentType)) {
     try { await response.body?.cancel(); } catch (_) {}
     throw new Error('unsupported full-response content type');
   }
