@@ -304,19 +304,39 @@ class DashToHlsService {
 
     const timeline = template.timeline;
     if (timeline && typeof timeline === 'object') {
-      let number = startNumber;
+      const entries = [];
       let cursor = null;
+      let totalIterations = 0;
+      let totalValidSegments = 0;
+
+      // First pass computes each S entry's timeline position and counts valid
+      // segments without allocating an object for every repeated segment.
       for (const s of asArray(timeline.S)) {
         const t = s['@_t'] !== undefined ? Number(s['@_t']) : (cursor === null ? pto : cursor);
         const d = Number(s['@_d'] || 0);
         const r = s['@_r'] !== undefined ? Number(s['@_r']) : 0;
-        for (let i = 0; i <= r; i++) {
-          push(number++, t + d * i, d);
-        }
+        const count = Number.isFinite(r) && r >= 0 ? Math.floor(r) + 1 : 0;
+
+        entries.push({ t, d, count, firstNumber: startNumber + totalIterations });
+        totalIterations += count;
+        if (d > 0) totalValidSegments += count;
         cursor = t + d * (r + 1);
       }
-      // Serve only the freshest slice of the DVR window.
-      return segments.slice(-MAX_WINDOW_SEGMENTS);
+
+      // Only materialize the final window. Large repeat counts must not cause
+      // thousands of temporary segment objects that are immediately discarded.
+      const firstKeptValidIndex = Math.max(0, totalValidSegments - MAX_WINDOW_SEGMENTS);
+      let validIndex = 0;
+      for (const entry of entries) {
+        if (entry.d > 0) {
+          const skip = Math.max(0, firstKeptValidIndex - validIndex);
+          for (let i = skip; i < entry.count; i++) {
+            push(entry.firstNumber + i, entry.t + entry.d * i, entry.d);
+          }
+          validIndex += entry.count;
+        }
+      }
+      return segments;
     }
 
     const fixedDuration = Number(template.duration || 0);
