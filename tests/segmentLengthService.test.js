@@ -1,6 +1,10 @@
 'use strict';
 
 jest.mock('../src/impitClient', () => ({ safeFetch: jest.fn() }));
+jest.mock('../src/services/OutboundUrlGuard', () => ({
+  ...jest.requireActual('../src/services/OutboundUrlGuard'),
+  checkOutboundUrl: jest.fn(async url => ({ ok: true, url, addresses: ['93.184.216.34'] })),
+}));
 
 const segmentLengthService = require('../src/services/SegmentLengthService');
 const { safeFetch } = require('../src/impitClient');
