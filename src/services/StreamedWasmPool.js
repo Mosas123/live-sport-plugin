@@ -3,7 +3,6 @@
 const { Worker } = require('worker_threads');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 
 class StreamedWasmPool {
   constructor(opts = {}) {
@@ -14,6 +13,7 @@ class StreamedWasmPool {
     this.pendingResolvers = new Map();
     this.jobCounter = 0;
     this.isDestroyed = false;
+    this._workerFactory = opts.workerFactory || ((scriptPath) => new Worker(scriptPath));
 
     this._workerScriptPath = this._resolveWorkerScriptPath();
     this._initPool();
@@ -43,7 +43,7 @@ class StreamedWasmPool {
     if (this.isDestroyed) return;
 
     try {
-      const worker = new Worker(this._workerScriptPath);
+      const worker = this._workerFactory(this._workerScriptPath);
       const workerObj = {
         id: index,
         worker,
@@ -62,15 +62,14 @@ class StreamedWasmPool {
         }
 
         if (msg.jobId) {
+          // Ignore late responses from jobs that have already timed out or been superseded.
+          if (workerObj.currentJobId !== msg.jobId) return;
+
           const resolver = this.pendingResolvers.get(msg.jobId);
           if (resolver) {
             this.pendingResolvers.delete(msg.jobId);
             clearTimeout(resolver.timer);
-            if (msg.error) {
-              resolver.resolve(null);
-            } else {
-              resolver.resolve(msg.m3u8Url || null);
-            }
+            resolver.resolve(msg.error ? null : (msg.m3u8Url || null));
           }
 
           workerObj.busy = false;
@@ -92,12 +91,13 @@ class StreamedWasmPool {
       });
 
       worker.on('exit', (code) => {
+        const idx = this.workers.indexOf(workerObj);
+        if (idx !== -1) {
+          this.workers.splice(idx, 1);
+        }
+
         if (!this.isDestroyed) {
           console.warn(`[StreamedWasmPool] Worker #${index} exited with code ${code}. Respawning...`);
-          const idx = this.workers.indexOf(workerObj);
-          if (idx !== -1) {
-            this.workers.splice(idx, 1);
-          }
           this._spawnWorker(index);
         }
       });
@@ -109,23 +109,26 @@ class StreamedWasmPool {
   }
 
   _drainQueue() {
-    if (this.jobQueue.length === 0) return;
+    while (this.jobQueue.length > 0) {
+      const idleWorker = this.workers.find(w => w.ready && !w.busy);
+      if (!idleWorker) return;
 
-    const idleWorker = this.workers.find(w => w.ready && !w.busy);
-    if (!idleWorker) return;
+      const job = this.jobQueue.shift();
+      if (!job) return;
 
-    const job = this.jobQueue.shift();
-    if (!job) return;
+      // A queued job may have timed out before a worker became available.
+      if (!this.pendingResolvers.has(job.jobId)) continue;
 
-    idleWorker.busy = true;
-    idleWorker.currentJobId = job.jobId;
-    idleWorker.worker.postMessage({
-      jobId: job.jobId,
-      user: job.user,
-      event: job.event,
-      id: job.id,
-      embedUrl: job.embedUrl
-    });
+      idleWorker.busy = true;
+      idleWorker.currentJobId = job.jobId;
+      idleWorker.worker.postMessage({
+        jobId: job.jobId,
+        user: job.user,
+        event: job.event,
+        id: job.id,
+        embedUrl: job.embedUrl
+      });
+    }
   }
 
   async resolveWasmStream(user, event, id, embedUrl, timeoutMs = 12000) {
@@ -146,17 +149,26 @@ class StreamedWasmPool {
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        if (this.pendingResolvers.has(jobId)) {
-          this.pendingResolvers.delete(jobId);
-          // Free worker if it was working on this timed-out job
-          const w = this.workers.find(work => work.currentJobId === jobId);
-          if (w) {
-            w.busy = false;
-            w.currentJobId = null;
-          }
-          resolve(null);
+        const resolver = this.pendingResolvers.get(jobId);
+        if (!resolver) return;
+
+        this.pendingResolvers.delete(jobId);
+        const queuedIndex = this.jobQueue.findIndex(job => job.jobId === jobId);
+        if (queuedIndex !== -1) {
+          this.jobQueue.splice(queuedIndex, 1);
+        }
+
+        const activeWorker = this.workers.find(work => work.currentJobId === jobId);
+        if (activeWorker) {
+          // Do not mark a still-running worker idle: terminate it so its state cannot
+          // overlap with the next job. The exit handler replaces it and resumes the queue.
+          activeWorker.ready = false;
+          Promise.resolve(activeWorker.worker.terminate()).catch(() => {});
+        } else {
           this._drainQueue();
         }
+
+        resolve(null);
       }, timeoutMs);
 
       this.pendingResolvers.set(jobId, { resolve, timer });
@@ -174,14 +186,16 @@ class StreamedWasmPool {
 
   async destroy() {
     this.isDestroyed = true;
-    for (const [jobId, item] of this.pendingResolvers.entries()) {
+    for (const item of this.pendingResolvers.values()) {
       clearTimeout(item.timer);
       item.resolve(null);
     }
     this.pendingResolvers.clear();
     this.jobQueue = [];
 
-    const terminations = this.workers.map(w => w.worker.terminate().catch(() => {}));
+    const terminations = this.workers.map(w =>
+      Promise.resolve(w.worker.terminate()).catch(() => {})
+    );
     await Promise.allSettled(terminations);
     this.workers = [];
   }
