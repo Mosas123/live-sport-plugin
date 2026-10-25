@@ -388,7 +388,6 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
         : res.headers && (res.headers.location || res.headers.Location);
       if (!rawLocation) return res;
 
-      try { await res.body?.cancel?.(); } catch (_) {}
       let nextUrl;
       try { nextUrl = new URL(rawLocation, currentUrl); } catch (_) { return res; }
       if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
@@ -397,6 +396,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
         error.statusCode = 403;
         throw error;
       }
+      try { await res.body?.cancel?.(); } catch (_) {}
 
       if (new URL(currentUrl).origin !== nextUrl.origin) {
         const sensitive = new Set(['authorization', 'cookie', 'cookie2', 'proxy-authorization', 'host']);
