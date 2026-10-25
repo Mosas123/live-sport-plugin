@@ -65,6 +65,24 @@ describe('hlsResource route — 307 redirect handler', () => {
     expect(res.headers.get('location')).toBe(testCdnUrl);
   });
 
+  test.each([
+    ['loopback IP', 'http://127.0.0.1:8080/admin'],
+    ['localhost hostname', 'http://localhost/admin'],
+    ['unsupported protocol', 'file:///etc/passwd'],
+  ])('rejects signed redirect destination with %s', async (_label, unsafeUrl) => {
+    const { token, psig } = byteRangeSigner.encodeSegmentToken({
+      url: unsafeUrl,
+      prefixBytes: 42
+    }, 60000);
+
+    const res = await fetch(`${baseUrl}/api/hls/resource/${token}/media.ts?psig=${encodeURIComponent(psig)}`, {
+      method: 'GET',
+      redirect: 'manual'
+    });
+
+    expect(res.status).toBe(403);
+  });
+
   test('rejects request with missing psig parameter (HTTP 400)', async () => {
     const res = await fetch(`${baseUrl}/api/hls/resource/sometoken/media.ts`, {
       method: 'GET',
