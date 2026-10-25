@@ -1,6 +1,7 @@
 // Controlled-clock tests for the manifest helper's existing retry policy.
 jest.mock('../src/container',()=>({resolve:jest.fn()}));
 jest.mock('../src/impitClient',()=>({safeFetch:jest.fn()}));
+jest.mock('../src/services/OutboundUrlGuard',()=>({checkOutboundUrl:jest.fn(async url=>({ok:true,url,addresses:['93.184.216.34']}))}));
 const {safeFetch}=require('../src/impitClient');
 const {fetchUpstreamManifest}=require('../src/manifestProxy');
 const track=p=>{const state={};p.then(value=>state.value=value,error=>state.error=error);return state;};
