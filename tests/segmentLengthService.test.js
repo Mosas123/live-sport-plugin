@@ -111,4 +111,51 @@ describe('SegmentLengthService', () => {
     }
     expect(service.cache.size).toBeLessThanOrEqual(10);
   });
+
+  test('caps concurrent probes and releases slots when a probe resolves', async () => {
+    const svc = new SegmentLengthService({ maxSize: 10, maxConcurrentProbes: 2 });
+    const pending = [];
+    safeFetch.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+
+    const firstUrl = 'https://cdn.example.com/chunk_limit_1.image';
+    const secondUrl = 'https://cdn.example.com/chunk_limit_2.image';
+    const rejectedUrl = 'https://cdn.example.com/chunk_limit_3.image';
+    const nextUrl = 'https://cdn.example.com/chunk_limit_4.image';
+    const okResponse = {
+      status: 206,
+      headers: fakeHeaders({ 'content-range': 'bytes 0-0/500042' })
+    };
+
+    const first = svc.probeContentLength(firstUrl);
+    const second = svc.probeContentLength(secondUrl);
+    expect(svc.activeProbes).toBe(2);
+    expect(pending).toHaveLength(2);
+
+    await expect(svc.probeContentLength(rejectedUrl)).resolves.toBeNull();
+    expect(svc.activeProbes).toBe(2);
+    expect(pending).toHaveLength(2);
+    expect(svc.inFlightProbes.has(rejectedUrl)).toBe(false);
+    expect(svc.probeFailures.has(rejectedUrl)).toBe(false);
+
+    pending[0](okResponse);
+    await expect(first).resolves.toBe(500000);
+    expect(svc.activeProbes).toBe(1);
+
+    const next = svc.probeContentLength(nextUrl);
+    expect(svc.activeProbes).toBe(2);
+    expect(pending).toHaveLength(3);
+
+    pending[1](okResponse);
+    pending[2](okResponse);
+    await expect(Promise.all([second, next])).resolves.toEqual([500000, 500000]);
+    expect(svc.activeProbes).toBe(0);
+  });
+
+  test('releases the active probe slot when safeFetch fails', async () => {
+    const svc = new SegmentLengthService({ maxSize: 10, maxConcurrentProbes: 1 });
+    safeFetch.mockRejectedValue(new Error('network failure'));
+
+    await expect(svc.probeContentLength('https://cdn.example.com/chunk_error.image')).resolves.toBeNull();
+    expect(svc.activeProbes).toBe(0);
+  });
 });
