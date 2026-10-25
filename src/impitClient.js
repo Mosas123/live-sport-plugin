@@ -454,7 +454,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
           }
           console.warn(`[impitClient] impit got 403, trying undici once for: ${url.slice(0, 90)}`);
           try {
-            return await undiciPath(method, headers, body, url, signal, timeoutMs);
+            return await undiciPath(method, headers, body, url, signal, timeoutMs, opts.validateRedirect);
           } catch (err) {
             if (signal.aborted) throw signal.reason || err;
             return impit403;
@@ -568,6 +568,11 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
       nextUrl = new URL(rawLocation, currentUrl);
     } catch (_) { break; }
     if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') break;
+
+    if (new URL(currentUrl).origin !== nextUrl.origin) {
+      const sensitive = new Set(['authorization', 'cookie', 'cookie2', 'proxy-authorization', 'host']);
+      headers = Object.fromEntries(Object.entries(headers || {}).filter(([key]) => !sensitive.has(key.toLowerCase())));
+    }
 
     if (method !== 'HEAD' && res.statusCode !== 307 && res.statusCode !== 308) {
       method = 'GET';
