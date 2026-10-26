@@ -600,6 +600,35 @@ function repairRefererFor(targetUrl) {
   return `https://${host}/`;
 }
 
+// Preserve provider-supplied playback headers while normalizing well-known
+// names case-insensitively. A Map avoids inherited property names and duplicate
+// casing without changing the shared provider metadata.
+function verificationHeaders(stream) {
+  const canonical = new Map([
+    ['referer', 'Referer'], ['origin', 'Origin'], ['user-agent', 'User-Agent'],
+    ['authorization', 'Authorization'], ['cookie', 'Cookie'],
+  ]);
+  const request = stream.behaviorHints?.proxyHeaders?.request || {};
+  // Verification is a new GET request: the transport must generate its own
+  // authority/framing. Preserve provider credentials and custom playback
+  // headers, but never forward hop-by-hop fields or Connection nominations.
+  const excluded = new Set([
+    'host', 'connection', 'keep-alive', 'proxy-connection',
+    'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+    'transfer-encoding', 'upgrade', 'content-length', 'expect',
+  ]);
+  for (const [name, value] of Object.entries(request)) {
+    if (name.toLowerCase() !== 'connection') continue;
+    for (const token of String(value).split(',')) {
+      const nominated = token.trim().toLowerCase();
+      if (nominated) excluded.add(nominated);
+    }
+  }
+  return Object.fromEntries(Object.entries(request)
+    .filter(([name]) => !excluded.has(name.toLowerCase()))
+    .map(([name, value]) => [canonical.get(name.toLowerCase()) || name, value]));
+}
+
 async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts = {}) {
 
   const checkedStreams = await Promise.all(streams.map(async (s) => {
@@ -632,29 +661,27 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
     }
 
     try {
-      const proxyReq = (s.behaviorHints && s.behaviorHints.proxyHeaders && s.behaviorHints.proxyHeaders.request) || {};
-      if (!referer) {
-        referer = proxyReq['Referer'] || proxyReq['referer'] || '';
-      }
+      const providerHeaders = verificationHeaders(s);
+      if (!referer) referer = providerHeaders.Referer || '';
+      // An explicit provider Origin must take precedence over the inferred
+      // Referer origin, unless the manifest proxy URL supplied its own Origin.
+      if (!origin) origin = providerHeaders.Origin || '';
       if (!origin && referer) {
         try { origin = new URL(referer).origin; } catch (_) {}
       }
-      if (!origin) {
-        origin = proxyReq['Origin'] || proxyReq['origin'] || '';
-      }
-      if (!cookie) {
-        cookie = proxyReq['Cookie'] || proxyReq['cookie'] || '';
-      }
+      if (!cookie) cookie = providerHeaders.Cookie || '';
 
       let res;
       let bodySample = '';
       let bodyTruncated = false;
+      let repairedHeaders = null;
 
       const isMp4 = targetUrl.includes('.mp4') || targetUrl.includes('type=4') || (targetUrl.includes('okcdn.ru') && !targetUrl.includes('.m3u8'));
 
       const reqHeaders = {
-        'User-Agent': customUa || proxyReq['User-Agent'] || proxyReq['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-        'Referer': referer
+        ...providerHeaders,
+        'User-Agent': customUa || providerHeaders['User-Agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'Referer': referer,
       };
       if (origin) reqHeaders['Origin'] = origin;
       if (cookie) reqHeaders['Cookie'] = cookie;
@@ -733,11 +760,10 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
           if (guess && guess !== referer) {
             console.log(`[Filter] ${res.status} with ${referer ? `refused referer ${referer}` : 'no referer'}; retrying once with ${guess}`);
             const retryHeaders = {
-              'User-Agent': reqHeaders['User-Agent'],
+              ...reqHeaders,
               'Referer': guess,
-              'Origin': guess.replace(/\/$/, ''),
+              'Origin': new URL(guess).origin,
             };
-            if (reqHeaders['Cookie']) retryHeaders['Cookie'] = reqHeaders['Cookie'];
             const r2 = await _safeFetch(targetUrl, {
               method: 'GET',
               headers: retryHeaders,
@@ -748,7 +774,11 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
             res = { status: r2.status };
             bodySample = await r2.text();
             bodyTruncated = r2.bodyTruncated === true;
-            if (res.status === 200) referer = guess; // so a later noteFailure/keep decision is accurate
+            if (res.status === 200) {
+              referer = guess;
+              origin = new URL(guess).origin;
+              repairedHeaders = retryHeaders;
+            }
           }
         } catch (_) { /* fall through to the dead-stream handling below */ }
       }
@@ -783,6 +813,26 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts =
         console.log(`[Filter] Dropped Pluto takedown slate: ${targetUrl}`);
         if (cacheKey) resolveCache.noteFailure(cacheKey);
         return null;
+      }
+
+      // Publish only an accepted repair after HLS validation and slate
+      // filtering. Keep nested upstream tokens, recovery keys and fragments.
+      if (repairedHeaders) {
+        if (parseManifestProxyUrl(s.url)) {
+          const parsed = new URL(s.url, 'http://localhost');
+          parsed.searchParams.set('referer', referer);
+          parsed.searchParams.set('origin', origin);
+          s.url = /^[a-z][a-z0-9+.-]*:/i.test(s.url)
+            ? parsed.toString() : parsed.pathname + parsed.search + parsed.hash;
+        }
+        const hints = s.behaviorHints || {};
+        s.behaviorHints = {
+          ...hints,
+          proxyHeaders: {
+            ...hints.proxyHeaders,
+            request: repairedHeaders,
+          },
+        };
       }
 
       // Parse Master Playlist quality, framerate (FPS), and bitrate in real-time (for HLS)
