@@ -37,6 +37,16 @@ function resolveCacheFile() {
   if (process.env.JEST_WORKER_ID) {
     return path.join(os.tmpdir(), `nuvio-matches-cache-test-${process.pid}.json`);
   }
+  // Operator override, read at runtime so it survives ncc. The bundler rewrites
+  // path.join(process.cwd(), 'data') below and drops the "data" segment, so a
+  // bundle always resolves its cache to <bundle dir>/matches_cache.json no
+  // matter what this source says. That rewrite is why the live cache lands in
+  // dist/ and why a rebuild cannot move it; an env var is the only external
+  // control. Keep this check after the jest branch: test isolation must not
+  // depend on the shell the suite happens to run in. Absolute paths only.
+  if (process.env.MATCHES_CACHE_PATH) {
+    return path.resolve(process.env.MATCHES_CACHE_PATH);
+  }
   const rootDataDir = path.join(process.cwd(), 'data');
   if (!fs.existsSync(rootDataDir)) {
     try { fs.mkdirSync(rootDataDir, { recursive: true }); } catch (_) {}
@@ -60,6 +70,12 @@ class CacheService {
     this.cacheFilePath = (typeof customCachePath === 'string' && customCachePath)
       ? customCachePath
       : resolveCacheFile();
+    // Boot-visible: the resolved path is build-dependent (see resolveCacheFile),
+    // and a wrong one silently invalidates every backup, runbook and "clear the
+    // cache" instruction. Two lines per start is not log noise.
+    if (!process.env.JEST_WORKER_ID) {
+      console.log(`[CacheService] matches cache: ${this.cacheFilePath}`);
+    }
     this._byId = new Map();
     this._byAlias = new Map();
     this._bySourceId = new Map();
