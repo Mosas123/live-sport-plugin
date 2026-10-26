@@ -101,9 +101,14 @@ function segmentAddressMode() {
 }
 
 /**
- * Build the signed 307 redirect URL for a cloaked TikTok segment.
+ * Build the signed 307 redirect URL for a cloaked TikTok segment, or keep the
+ * direct CDN URL when production signing is disabled.
  */
 function buildByteRangeRedirectUrl(absoluteUrl, opts = {}) {
+  // Missing production configuration disables only this legacy hop. Both URI
+  // and full-playlist rewriting use the existing direct-CDN mode instead.
+  // Never turn signing failure into a server-side video proxy fallback.
+  if (byteRangeSigner.enabled === false) return absoluteUrl;
   const { referer = '', origin = '', absoluteAddonBaseUrl = '' } = opts;
   const { token, psig } = byteRangeSigner.encodeSegmentToken({
     url: absoluteUrl,
