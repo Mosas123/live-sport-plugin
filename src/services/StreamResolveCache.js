@@ -308,6 +308,8 @@ class StreamResolveCache {
 
     // ── Shared L2: another worker may have minted (or be minting) this key ──
     let claimed = false;
+    let ownerToken;
+    let supportsVacantClaim = false;
     if (_sharedAvailable()) {
       const enc = _sharedKey(key);
       let remote = await _sharedJson(enc);
@@ -326,9 +328,9 @@ class StreamResolveCache {
         remote = null; // expired in transit: claim and mint instead
       }
       if (_sharedAvailable() && (!remote || remote.status === 'miss')) {
-        const claim = await _sharedJson(`${enc}?claim=1`);
+        const claim = await _sharedJson(`${enc}?claim=1&fenced=1`);
         if (operation.pruned) return;
-        if (claim && claim.ok === false) {
+        if (claim && claim.ok === false && claim.reason !== 'claim-capacity') {
           // Another worker holds the claim — wait for its result.
           remote = await this._sharedWaitMinting(key);
           if (operation.pruned) return;
@@ -342,9 +344,13 @@ class StreamResolveCache {
               return;
             }
           }
-        } else if (claim && claim.ok) {
-          claimed = true; // we own the mint; write the result back below
+        } else if (claim && claim.ok && typeof claim.ownerToken === 'string' && claim.ownerToken) {
+          ownerToken = claim.ownerToken;
+          supportsVacantClaim = claim.supportsVacantClaim === true;
+          claimed = true;
         }
+        // An older resolver may grant a claim without a token; keep local
+        // playback available but skip an unsafe shared write/release.
       }
     }
 
@@ -376,15 +382,27 @@ class StreamResolveCache {
         }
         // Write-through so the other worker inherits the mint instantly.
         if (claimed && _sharedAvailable()) {
-          await _sharedJson(
+          const publish = token => _sharedJson(
             _sharedKey(key),
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ streams: status === 'ok' ? streams : [], ttlMs: ttl, status }),
+              body: JSON.stringify({ streams: status === 'ok' ? streams : [], ttlMs: ttl, status, ownerToken: token }),
             },
             2000
           );
+          const write = await publish(ownerToken);
+          // Background mints can outlive the original lease. Retry once with
+          // a fresh lease only if the resolver atomically confirms no cached
+          // result or active owner would be displaced. Older resolvers must
+          // explicitly advertise this protocol before we attempt recovery.
+          if (write && write.ok === false && write.reason === 'stale-owner' && supportsVacantClaim && !operation.pruned && _sharedAvailable()) {
+            const fresh = await _sharedJson(`${_sharedKey(key)}?claim=1&fenced=1&vacant=1`);
+            if (!operation.pruned && fresh && fresh.ok && fresh.vacantOnly === true && typeof fresh.ownerToken === 'string' && fresh.ownerToken) {
+              ownerToken = fresh.ownerToken;
+              await publish(ownerToken);
+            }
+          }
         }
       } catch (_) {
         if (operation.pruned) return;
@@ -395,7 +413,7 @@ class StreamResolveCache {
         // worker retry right away.) Releasing also restores retry diversity:
         // the other worker's attempt may succeed where ours failed.
         if (claimed && _sharedAvailable()) {
-          _sharedJson(_sharedKey(key), { method: 'DELETE' }, 1000).catch(() => {});
+          _sharedJson(`${_sharedKey(key)}?ownerToken=${encodeURIComponent(ownerToken)}`, { method: 'DELETE' }, 1000).catch(() => {});
         }
       }
     })();
