@@ -30,7 +30,10 @@ jest.mock('undici', () => ({
 }));
 
 const { request } = require('undici');
-const { safeFetch } = require('../src/impitClient');
+const { safeFetch, isImpitAvailable } = require('../src/impitClient');
+
+// Fail before any request if a combined run does not select the native mock.
+beforeAll(() => expect(isImpitAvailable()).toBe(false));
 
 const PLAYLIST = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.0,\nseg0.ts\n';
 const PRIMARY = 'https://dlstreams.st/schedule/schedule-generated.json';
