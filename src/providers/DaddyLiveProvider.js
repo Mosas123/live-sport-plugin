@@ -938,61 +938,66 @@ class DaddyLiveProvider extends BaseProvider {
           }
 
           for (const iframeUrl of candidateUrls.slice(0, 3)) {
-            let embedOrigin = '';
             try {
-              embedOrigin = new URL(iframeUrl).origin;
-            } catch (_) {
-              embedOrigin = base;
-            }
-            let embedReferer = `${embedOrigin}/`;
-
-            // Fetch the embed page
-            const embedRes = await this.proxyFetch(iframeUrl, {
-              headers: {
-                'User-Agent': UA,
-                'Referer': playerUrl,
-                'Origin': base,
-                'Sec-Fetch-Dest': 'iframe',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'cross-site',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-              },
-              signal: AbortSignal.timeout(6000)
-            });
-
-            if (!embedRes || !embedRes.ok) continue;
-
-            const embedHtml = typeof embedRes.text === 'function' ? await embedRes.text() : embedRes.text;
-            let m3u8Url = null;
-
-            // Resolve via the shared helper: _econfig -> chain -> direct m3u8
-            // -> JSON player hop -> nested iframe (recursive, up to 2 levels).
-            const resolved = await this._resolveFromHtml(embedHtml, iframeUrl, 0);
-            if (resolved && resolved.url && !isTikTokCloakedStream(resolved.url)) {
-              m3u8Url = resolved.url;
+              let embedOrigin = '';
               try {
-                embedOrigin = new URL(resolved.referer || iframeUrl).origin;
+                embedOrigin = new URL(iframeUrl).origin;
               } catch (_) {
                 embedOrigin = base;
               }
-              embedReferer = `${embedOrigin}/`;
-            }
+              let embedReferer = `${embedOrigin}/`;
 
-            if (m3u8Url) {
-              const registryReferer = this._terminalRefererFor(m3u8Url);
-              const candidate = this._buildManifestStream(
-                m3u8Url,
-                registryReferer || embedReferer,
-                sourceId,
-                channelName
-              );
+              // Fetch the embed page
+              const embedRes = await this.proxyFetch(iframeUrl, {
+                headers: {
+                  'User-Agent': UA,
+                  'Referer': playerUrl,
+                  'Origin': base,
+                  'Sec-Fetch-Dest': 'iframe',
+                  'Sec-Fetch-Mode': 'navigate',
+                  'Sec-Fetch-Site': 'cross-site',
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                },
+                signal: AbortSignal.timeout(6000)
+              });
 
-              if (registryReferer) {
-                streams.push(candidate);
-                foundDirect = true;
-                break;
+              if (!embedRes || !embedRes.ok) continue;
+
+              const embedHtml = typeof embedRes.text === 'function' ? await embedRes.text() : embedRes.text;
+              let m3u8Url = null;
+
+              // Resolve via the shared helper: _econfig -> chain -> direct m3u8
+              // -> JSON player hop -> nested iframe (recursive, up to 2 levels).
+              const resolved = await this._resolveFromHtml(embedHtml, iframeUrl, 0);
+              if (resolved && resolved.url && !isTikTokCloakedStream(resolved.url)) {
+                m3u8Url = resolved.url;
+                try {
+                  embedOrigin = new URL(resolved.referer || iframeUrl).origin;
+                } catch (_) {
+                  embedOrigin = base;
+                }
+                embedReferer = `${embedOrigin}/`;
               }
-              if (!fallbackStream) fallbackStream = candidate;
+
+              if (m3u8Url) {
+                const registryReferer = this._terminalRefererFor(m3u8Url);
+                const candidate = this._buildManifestStream(
+                  m3u8Url,
+                  registryReferer || embedReferer,
+                  sourceId,
+                  channelName
+                );
+
+                if (registryReferer) {
+                  streams.push(candidate);
+                  foundDirect = true;
+                  break;
+                }
+                if (!fallbackStream) fallbackStream = candidate;
+              }
+            } catch (_) {
+              // A single iframe failure must not skip the other candidates.
+              continue;
             }
           }
         } catch (_) {

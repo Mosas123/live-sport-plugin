@@ -91,10 +91,16 @@ class SoccerFullProvider extends BaseProvider {
       if (!linkMatch) continue;
 
       const rawUrl = linkMatch[1];
-      if (!rawUrl.endsWith('.html')) continue;
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(rawUrl, `${this.baseUrl}/`);
+      } catch (_) {
+        continue;
+      }
+      if (parsedUrl.origin !== this.baseUrl || parsedUrl.username || parsedUrl.password || !parsedUrl.pathname.endsWith('.html')) continue;
 
-      const matchUrl = rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`;
-      const slug = matchUrl.replace(/^\//, '').replace(/\.html$/, '');
+      const matchUrl = parsedUrl.pathname + parsedUrl.search;
+      const slug = parsedUrl.pathname.replace(/^\//, '').replace(/\.html$/, '');
 
       // Title
       let title = linkMatch[2] ? linkMatch[2].trim() : '';

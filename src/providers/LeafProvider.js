@@ -58,7 +58,7 @@ class LeafProvider extends BaseProvider {
     const matches = [];
 
     for (const item of metas) {
-      if (!item || !item.id || !item.name) continue;
+      if (!item || typeof item.id !== 'string' || !item.id || typeof item.name !== 'string' || !item.name) continue;
 
       // Strictly exclude 24/7 channels (IDs starting with leaf: or networks category)
       if (item.id.startsWith('leaf:') || item.category === 'networks' || item.isChannel) {
@@ -145,7 +145,7 @@ class LeafProvider extends BaseProvider {
     const resolved = [];
 
     for (const st of streamsList) {
-      if (!st || !st.url) continue;
+      if (!st || typeof st.url !== 'string' || !st.url) continue;
 
       // STRICT ISOLATION: Discard any stream that is not papacito.cfd (no streamed.pk, no paywalled redirects)
       if (!st.url.includes('papacito.cfd')) continue;
@@ -160,8 +160,8 @@ class LeafProvider extends BaseProvider {
         directUrl = `https://papacito.cfd/m3u/${slug}/live.m3u8?token=${this.masterToken}`;
       }
 
-      const rawName = st.name || '';
-      const rawTitle = st.title || '';
+      const rawName = typeof st.name === 'string' ? st.name : '';
+      const rawTitle = typeof st.title === 'string' ? st.title : '';
 
       // Determine resolution & quality
       let resolution = '1080p';

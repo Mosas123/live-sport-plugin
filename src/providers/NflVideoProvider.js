@@ -242,6 +242,14 @@ class NflVideoProvider extends BaseProvider {
         const rawPart = watchLinks[i][2].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
         const partName = rawPart ? rawPart.replace(/\s+/g, ' ') : `Part ${i + 1}`;
 
+        try {
+          const parsed = new URL(dest, targetUrl);
+          if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+          dest = parsed.href;
+        } catch (_) {
+          continue;
+        }
+
         // Unwrap bridge page if dest is not a direct video/embed provider
         const isDirectProvider = /ok\.ru|byse|vidara|dailymotion|dai\.ly|d\.tube|\.(?:m3u8|mp4)/i.test(dest);
         if (!isDirectProvider && /^https?:\/\//i.test(dest)) {
@@ -249,14 +257,11 @@ class NflVideoProvider extends BaseProvider {
             const bridgeHtml = await this.fetchPage.fire(dest, { 'Referer': 'https://nfl-video.com/' });
             const iframeMatch = bridgeHtml && bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
             if (iframeMatch) {
-              dest = iframeMatch[1];
+              const iframeUrl = new URL(iframeMatch[1], dest);
+              if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
+              dest = iframeUrl.href;
             }
           } catch (_) {}
-        }
-
-        // Normalize protocol-relative URLs
-        if (dest.startsWith('//')) {
-          dest = `https:${dest}`;
         }
 
         // 1. Vidara API resolution

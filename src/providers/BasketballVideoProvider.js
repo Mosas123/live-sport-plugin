@@ -10,6 +10,16 @@ function b64Decode(str) {
   return Buffer.from(str, 'base64');
 }
 
+function isNbaOnTvUrl(value, baseUrl) {
+  try {
+    const url = new URL(value, baseUrl);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password &&
+      (url.hostname === 'nbaontv.com' || url.hostname.endsWith('.nbaontv.com'));
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * BasketballVideoProvider
  *
@@ -216,7 +226,7 @@ class BasketballVideoProvider extends BaseProvider {
       const watchLinks = linkMatches.filter(l => {
         const dest = l[1] || '';
         const text = l[2].replace(/<[^>]+>/g, '').trim();
-        const isVideoDest = this._isByseUrl(dest) || dest.includes('ok.ru') || dest.includes('nbaontv.com') || /\.(m3u8|mp4)(?:[?#]|$)/i.test(dest);
+        const isVideoDest = this._isByseUrl(dest) || dest.includes('ok.ru') || isNbaOnTvUrl(dest, targetUrl) || /\.(m3u8|mp4)(?:[?#]|$)/i.test(dest);
         const isVideoText = /watch|part|server|quarter|half|replay|full game/i.test(text);
         return isVideoDest || isVideoText;
       });
@@ -235,20 +245,25 @@ class BasketballVideoProvider extends BaseProvider {
         const rawPart = watchLinks[i][2].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
         const partName = rawPart ? rawPart.replace(/\s+/g, ' ') : `Part ${i + 1}`;
 
+        try {
+          const parsed = new URL(dest, targetUrl);
+          if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+          dest = parsed.href;
+        } catch (_) {
+          continue;
+        }
+
         // Unwrap nbaontv.com bridge wrappers
-        if (dest.includes('nbaontv.com')) {
+        if (isNbaOnTvUrl(dest)) {
           try {
             const bridgeHtml = await this.fetchPage.fire(dest);
             const iframeMatch = bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
             if (iframeMatch) {
-              dest = iframeMatch[1];
+              const iframeUrl = new URL(iframeMatch[1], dest);
+              if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
+              dest = iframeUrl.href;
             }
           } catch (_) {}
-        }
-
-        // Normalize protocol-relative URLs
-        if (dest.startsWith('//')) {
-          dest = `https:${dest}`;
         }
 
         // 1. Byse AES-256-GCM Payload Extraction (Top Priority - SprintCDN Edge)

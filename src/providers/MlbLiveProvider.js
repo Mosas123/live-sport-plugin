@@ -319,19 +319,25 @@ class MlbLiveProvider extends BaseProvider {
         const rawPart = watchLinks[i][2].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
         const partName = rawPart ? rawPart.replace(/\s+/g, ' ') : `Part ${i + 1}`;
 
+        try {
+          const parsed = new URL(dest, targetUrl);
+          if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+          dest = parsed.href;
+        } catch (_) {
+          continue;
+        }
+
         const isDirectProvider = /ok\.ru|byse|vidara|dailymotion|dai\.ly|d\.tube|\.(?:m3u8|mp4)/i.test(dest);
         if (!isDirectProvider && /^https?:\/\//i.test(dest)) {
           try {
             const bridgeHtml = await this.fetchPage.fire(dest, { 'Referer': 'https://mlblive.net/' });
             const iframeMatch = bridgeHtml && bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
             if (iframeMatch) {
-              dest = iframeMatch[1];
+              const iframeUrl = new URL(iframeMatch[1], dest);
+              if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
+              dest = iframeUrl.href;
             }
           } catch (_) {}
-        }
-
-        if (dest.startsWith('//')) {
-          dest = `https:${dest}`;
         }
 
         // 1. Vidara API resolution

@@ -622,9 +622,10 @@ class LiveTVProvider {
                   
                   const iframeMatch = clipHtml.match(/<iframe[^>]+src=["']([^"']+)["']/i);
                   if (iframeMatch) {
-                      const iframeSrc = iframeMatch[1].startsWith('//') ? 'https:' + iframeMatch[1] : iframeMatch[1];
+                      const iframeUrl = new URL(iframeMatch[1], currentUrl);
+                      const iframeSrc = iframeUrl.href;
                       // Filter out Google account / signin iframes
-                      if (!iframeSrc.includes('/v3/signin') && !iframeSrc.includes('accounts.google.com')) {
+                      if (['http:', 'https:'].includes(iframeUrl.protocol) && !iframeSrc.includes('/v3/signin') && !iframeSrc.includes('accounts.google.com')) {
                           currentUrl = await unshorten(iframeSrc);
                           continue;
                       }

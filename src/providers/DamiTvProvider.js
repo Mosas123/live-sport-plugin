@@ -117,20 +117,21 @@ class DamiTvProvider extends BaseProvider {
 
     try {
       const data = await this.fetchData.fire();
-      if (!data || !data.success || !Array.isArray(data.streams)) return [];
+      if (!data || !data.success || !Array.isArray(data.streams)) throw new Error('Invalid primary feed');
 
       const feedTimestamp = data.timestamp || 0;
 
       data.streams.forEach(categoryGroup => {
-        const streams = categoryGroup.streams || [];
+        if (!categoryGroup || !Array.isArray(categoryGroup.streams)) return;
+        const streams = categoryGroup.streams;
 
         streams.forEach(s => {
-          if (!s.id || !s.name) return;
+          if (!s || !s.id || !s.name) return;
 
           // Every source embed url is keyed by the ?id= param; build the
           // canonical primary embed the same way the feed does.
           const primaryEmbed = `https://damitv.st/embed/?id=${encodeURIComponent(s.id)}`;
-          const rawSources = (s.sources && s.sources.length ? s.sources : [{}]);
+          const rawSources = (Array.isArray(s.sources) && s.sources.length ? s.sources : [{}]);
           const sources = this._dedupeSources(rawSources, primaryEmbed);
           if (sources.length === 0) return;
 
