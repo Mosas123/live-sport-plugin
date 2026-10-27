@@ -8,6 +8,7 @@ const { BASE_URL } = require('./config');
 const { performance } = require('perf_hooks');
 const SkTechCrypto = require('./resolver/sktech/SkTechCrypto');
 const { manifestPlaybackUrl } = require('./services/ManifestPlaybackUrl');
+const { checkOutboundUrl } = require('./services/OutboundUrlGuard');
 
 // Source selection (shared by handleStream and prewarmMatch)
 function detectChannelCountry(channelName) {
@@ -339,8 +340,9 @@ const VERIFY_ATTEMPTS = Number(process.env.VERIFY_ATTEMPTS || 3);
 // Speed probe: one ranged segment fetch per stream, used to derive speedScore.
 // The range must be large enough that transfer time dominates TTFB, otherwise
 // the measured rate just reflects latency instead of throughput.
-const SPEED_PROBE_TIMEOUT_MS = Number(process.env.SPEED_PROBE_TIMEOUT_MS || 5000);
-const SPEED_PROBE_RANGE_BYTES = Number(process.env.SPEED_PROBE_RANGE_BYTES || 524288);
+const SPEED_PROBE_TIMEOUT_MS = Math.max(250, Math.min(10000, Number(process.env.SPEED_PROBE_TIMEOUT_MS) || 5000));
+const SPEED_PROBE_RANGE_BYTES = Math.floor(Math.max(16 * 1024, Math.min(1024 * 1024, Number(process.env.SPEED_PROBE_RANGE_BYTES) || 524288)));
+const SPEED_PROBE_MIN_BYTES = Math.floor(Math.max(1, Math.min(SPEED_PROBE_RANGE_BYTES, Number(process.env.SPEED_PROBE_MIN_BYTES) || 32768)));
 const ENABLE_SPEED_PROBE = process.env.ENABLE_SPEED_PROBE !== 'false';
 
 // Proxied /api/manifest URLs wrap an upstream token that expires on its own
@@ -378,6 +380,83 @@ function parseManifestProxyUrl(rawUrl) {
 // shortcut that bypasses it.
 function buildPlayerSegmentUrl(segmentUri, manifestUrl, referer, origin) {
   return rewriteHlsUri(segmentUri, manifestUrl, { referer, origin, absoluteAddonBaseUrl: BASE_URL });
+}
+
+// The only intentional self-request is our signed zero-byte-relay redirect.
+// Matching the base origin alone would also exempt unrelated add-on endpoints.
+function isSignedAddonRedirect(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.origin === new URL(BASE_URL).origin &&
+      /^\/(?:api\/)?hls\/resource\/[^/]+\/media\.ts$/.test(parsed.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Only a short, validated redirect chain is permitted. Do not let fetch()
+// automatically follow a Location that has not passed the outbound URL guard.
+async function guardedProbeFetch(url, options = {}) {
+  let currentUrl = url;
+  const maxRedirects = 2;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (!isSignedAddonRedirect(currentUrl)) {
+      const verdict = await checkOutboundUrl(currentUrl);
+      if (!verdict || verdict.ok !== true) {
+        const error = new Error('Blocked speed-probe URL: ' + (verdict && verdict.reason || 'validation_failed'));
+        error.code = 'EOUTBOUNDURLBLOCKED';
+        error.statusCode = 403;
+        throw error;
+      }
+    }
+
+    const response = await fetch(currentUrl, { ...options, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.headers && response.headers.get('location');
+    if (!location) return response;
+    try { await response.body?.cancel?.(); } catch (_) {}
+    if (hop >= maxRedirects) {
+      const error = new Error('Speed-probe redirect limit exceeded');
+      error.code = 'ETOOMANYREDIRECTS';
+      throw error;
+    }
+
+    let nextUrl;
+    try {
+      nextUrl = new URL(location, currentUrl);
+    } catch (_) {
+      throw new Error('Invalid speed-probe redirect URL');
+    }
+    if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+      throw new Error('Blocked speed-probe redirect protocol');
+    }
+    currentUrl = nextUrl.toString();
+  }
+  throw new Error('Speed-probe redirect limit exceeded');
+}
+
+// Count at most the requested bytes, then cancel. Without a streaming response,
+// do not call arrayBuffer(): it would buffer an unlimited full-size 200 response.
+async function readProbeBytes(body, maxBytes) {
+  if (!body || typeof body.getReader !== 'function') return 0;
+  const reader = body.getReader();
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || !value.byteLength) continue;
+      total += Math.min(value.byteLength, maxBytes - total);
+      if (total >= maxBytes) {
+        try { await reader.cancel(); } catch (_) {}
+        break;
+      }
+    }
+    return total;
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
+  }
 }
 
 /**
@@ -447,7 +526,7 @@ async function measureStreamSpeed(stream, manifestUrl, manifestText, referer, or
     try {
       const start = performance.now();
       const response = await withRetry(
-        () => fetch(segmentUrl, { signal: controller.signal, headers: probeHeaders }),
+        () => guardedProbeFetch(segmentUrl, { signal: controller.signal, headers: probeHeaders }),
         {
           attempts: 1,
           deadlineAt,
@@ -456,23 +535,14 @@ async function measureStreamSpeed(stream, manifestUrl, manifestText, referer, or
       );
       const headersAt = performance.now();
       if (!response || !response.ok) return;
-      let bytes = 0;
-      if (response.body && typeof response.body.getReader === 'function') {
-        const reader = response.body.getReader();
-        try {
-          const { value } = await reader.read();
-          if (value) bytes = value.byteLength;
-        } finally {
-          reader.cancel().catch(() => {});
-          controller.abort();
-        }
-      } else {
-        const buf = await response.arrayBuffer();
-        bytes = buf.byteLength;
-      }
+      const bytes = await readProbeBytes(response.body, SPEED_PROBE_RANGE_BYTES);
       const end = performance.now();
-      const segmentBytes = getContentRangeTotal(response.headers);
-      if (!segmentBytes || bytes === 0) return;
+      const rangeTotal = getContentRangeTotal(response.headers);
+      const contentLength = response.status === 200 && response.headers && typeof response.headers.get === 'function'
+        ? Number(response.headers.get('content-length'))
+        : 0;
+      const segmentBytes = rangeTotal || (Number.isSafeInteger(contentLength) && contentLength > 0 ? contentLength : null);
+      if (!segmentBytes || bytes < SPEED_PROBE_MIN_BYTES) return;
       // Exclude TTFB from the rate denominator: with a small ranged read the
       // body lands almost instantly, so including connect+first-byte latency
       // would make the "rate" a latency measurement and understate fast links.
@@ -510,6 +580,7 @@ async function measureStreamSpeed(stream, manifestUrl, manifestText, referer, or
       }
     } finally {
       clearTimeout(timer);
+      controller.abort();
     }
   } catch (err) {
     console.log(`[SpeedProbe] Skipped stream timing: ${err.message}`);
@@ -1745,6 +1816,8 @@ module.exports = {
   // Exported for tests: the retry/keep/drop policy is the part worth pinning
   // down, and driving it through handleStream would need the whole match cache.
   verifyStreams,
+  guardedProbeFetch,
+  readProbeBytes,
   // Exported for direct unit testing of the resolution deduplication algorithm
   // without requiring a live container / IoC / match-cache setup.
   deduplicateResolutions,
