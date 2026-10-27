@@ -1,3 +1,4 @@
+jest.mock('../src/services/OutboundUrlGuard', () => ({ checkOutboundUrl: jest.fn(async () => ({ ok: true })) }));
 jest.mock('../src/container',()=>{const Registry=jest.requireActual('../src/services/IframeDomainRegistry');const registry=new Registry();return {resolve:name=>name==='iframeDomainRegistry'?registry:undefined};});
 jest.mock('../src/impitClient',()=>({safeFetch:jest.fn(),isImpitAvailable:()=>false,getImpit:()=>null}));
 const {safeFetch}=require('../src/impitClient');
