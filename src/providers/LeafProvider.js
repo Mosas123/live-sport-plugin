@@ -147,8 +147,13 @@ class LeafProvider extends BaseProvider {
     for (const st of streamsList) {
       if (!st || typeof st.url !== 'string' || !st.url) continue;
 
-      // STRICT ISOLATION: Discard any stream that is not papacito.cfd (no streamed.pk, no paywalled redirects)
-      if (!st.url.includes('papacito.cfd')) continue;
+      // Match the actual host rather than a domain-looking substring in a
+      // path, query, credentials, or an unrelated hostname.
+      let sourceUrl;
+      try { sourceUrl = new URL(st.url); } catch (_) { continue; }
+      const host = sourceUrl.hostname.toLowerCase();
+      if (!['http:', 'https:'].includes(sourceUrl.protocol) || sourceUrl.username || sourceUrl.password ||
+          (host !== 'papacito.cfd' && !host.endsWith('.papacito.cfd'))) continue;
 
       // Preserve upstream signed playback URL (which includes the valid ?ft= JWT).
       // Fallback to minted master token only if upstream URL has no query parameters.
