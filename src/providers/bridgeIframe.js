@@ -19,4 +19,12 @@ function findBridgeIframe(html, baseUrl, isKnownPlayer, maxCandidates = 8) {
   return fallback;
 }
 
-module.exports = { findBridgeIframe };
+function matchesHost(host, domain) {
+  return host === domain || host.endsWith('.' + domain);
+}
+
+function isByseHost(host) {
+  return /(?:^|\.)byse[a-z0-9]*\.[a-z]+$/i.test(host);
+}
+
+module.exports = { findBridgeIframe, matchesHost, isByseHost };

@@ -2,6 +2,15 @@
 const NflVideoProvider = require('../src/providers/NflVideoProvider');
 
 describe('NFLVideo relative stream links', () => {
+  test('does not prioritize an unrelated hostname containing a known player name', async () => {
+    const provider = new NflVideoProvider();
+    provider.fetchPage.fire = jest.fn(async url => url.endsWith('/bridge/123')
+      ? '<iframe src="https://vidara.so.attacker.example/embed"></iframe><iframe src="../video/game.mp4"></iframe>'
+      : '<a href="../bridge/123">Watch</a>');
+    provider._extractVidara = jest.fn().mockResolvedValue([]);
+    expect((await provider.resolveStream('https://nfl-video.com/games/replay')).map(s => s.url)).toEqual(['https://nfl-video.com/video/game.mp4']);
+    expect(provider._extractVidara).not.toHaveBeenCalled();
+  });
   test('finds a media iframe after an unrelated bridge iframe', async () => {
     const provider = new NflVideoProvider();
     provider.fetchPage.fire = jest.fn(async url => url.endsWith('/bridge/123')

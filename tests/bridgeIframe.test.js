@@ -1,5 +1,5 @@
 'use strict';
-const { findBridgeIframe } = require('../src/providers/bridgeIframe');
+const { findBridgeIframe, matchesHost, isByseHost } = require('../src/providers/bridgeIframe');
 const known = url => /\.(m3u8|mp4)$/i.test(url.pathname);
 const base = 'https://bridge.example/dir/page';
 
@@ -14,4 +14,10 @@ test('skips invalid and non-http URLs and resolves relative media with its signe
 test('does not inspect beyond the candidate limit', () => {
   const html = Array.from({ length: 8 }, (_, i) => `<iframe src="/unknown${i}"></iframe>`).join('') + '<iframe src="/video.mp4"></iframe>';
   expect(findBridgeIframe(html, base, known)).toBe('https://bridge.example/unknown0');
+});
+test('recognizes configured domains and subdomains but not lookalikes', () => {
+  expect(matchesHost('player.vidara.so', 'vidara.so')).toBe(true);
+  expect(matchesHost('vidara.so.attacker.example', 'vidara.so')).toBe(false);
+  expect(isByseHost('bysexyz.com')).toBe(true);
+  expect(isByseHost('bysexyz.com.attacker.example')).toBe(false);
 });

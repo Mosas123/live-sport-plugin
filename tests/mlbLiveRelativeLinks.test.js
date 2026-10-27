@@ -3,6 +3,15 @@ jest.mock('../src/impitClient', () => ({ safeFetch: jest.fn() }));
 const MlbLiveProvider = require('../src/providers/MlbLiveProvider');
 
 describe('MLBLive relative stream links', () => {
+  test('does not prioritize an unrelated hostname containing a known player name', async () => {
+    const provider = new MlbLiveProvider();
+    provider.fetchPage.fire = jest.fn(async url => url.endsWith('/bridge/123')
+      ? '<iframe src="https://vidara.so.attacker.example/embed"></iframe><iframe src="../video/game.mp4"></iframe>'
+      : '<a href="../bridge/123">Watch</a>');
+    provider._extractVidara = jest.fn().mockResolvedValue([]);
+    expect((await provider.resolveStream('https://mlblive.net/games/replay')).map(s => s.url)).toEqual(['https://mlblive.net/video/game.mp4']);
+    expect(provider._extractVidara).not.toHaveBeenCalled();
+  });
   test('finds a media iframe after an unrelated bridge iframe', async () => {
     const provider = new MlbLiveProvider();
     provider.fetchPage.fire = jest.fn(async url => url.endsWith('/bridge/123')

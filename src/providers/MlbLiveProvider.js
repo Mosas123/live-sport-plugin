@@ -5,7 +5,7 @@ const undici = require('undici');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
-const { findBridgeIframe } = require('./bridgeIframe');
+const { findBridgeIframe, matchesHost, isByseHost } = require('./bridgeIframe');
 const { safeFetch } = require('../impitClient');
 const { extractTeamsFromTitle } = require('../services/TeamNameExtractor');
 
@@ -334,9 +334,8 @@ class MlbLiveProvider extends BaseProvider {
             try {
               const bridgeHtml = await this.fetchPage.fire(dest, { 'Referer': 'https://mlblive.net/' });
               const iframeUrl = findBridgeIframe(bridgeHtml, dest, url =>
-                /\.(m3u8|mp4)$/i.test(url.pathname) || this._isVidaraUrl(url.hostname) ||
-                this._isByseUrl(url.hostname) || this._isDailymotionUrl(url.hostname) ||
-                url.hostname === 'ok.ru' || url.hostname.endsWith('.ok.ru'));
+                /\.(m3u8|mp4)$/i.test(url.pathname) || isByseHost(url.hostname) ||
+                ['vidara.so', 'dailymotion.com', 'dai.ly', 'ok.ru'].some(domain => matchesHost(url.hostname, domain)));
               if (iframeUrl) dest = iframeUrl;
             } catch (_) {}
           }
