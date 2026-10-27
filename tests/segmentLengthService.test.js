@@ -87,6 +87,66 @@ describe('SegmentLengthService', () => {
     expect(safeFetch.mock.calls[1][1].method).toBe('HEAD');
   });
 
+  test('full 200 range fallback reads at most 1 KiB and still uses full object metadata', async () => {
+    const url = 'https://cdn.example.com/ignores-range.image';
+    safeFetch.mockResolvedValueOnce({
+      status: 200,
+      bodyTruncated: true,
+      headers: fakeHeaders({ 'content-length': '5000042' }),
+    });
+    const size = await service.probeContentLength(url);
+    expect(size).toBe(5000000);
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+    expect(safeFetch.mock.calls[0][1]).toEqual(expect.objectContaining({
+      method: 'GET',
+      maxBodyBytes: 1024,
+      attempts: 1,
+    }));
+  });
+
+  test('206 Content-Range total is accepted with the capped ranged body', async () => {
+    const url = 'https://cdn.example.com/ranged.image';
+    safeFetch.mockResolvedValueOnce({
+      status: 206,
+      headers: fakeHeaders({ 'content-range': 'bytes 0-0/6000042', 'content-length': '1' }),
+    });
+    expect(await service.probeContentLength(url)).toBe(6000000);
+    expect(safeFetch.mock.calls[0][1].maxBodyBytes).toBe(1024);
+  });
+
+  test('a rejected ranged probe never treats an error-page length as segment size', async () => {
+    const url = 'https://cdn.example.com/access-denied.image';
+    safeFetch
+      .mockResolvedValueOnce({ status: 403, headers: fakeHeaders({ 'content-length': '9990042' }) })
+      .mockResolvedValueOnce({ status: 200, headers: fakeHeaders({ 'content-length': '2000042' }) });
+    expect(await service.probeContentLength(url)).toBe(2000000);
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+    expect(safeFetch.mock.calls[1][1]).toEqual(expect.objectContaining({
+      method: 'HEAD',
+      maxBodyBytes: 1024,
+    }));
+    expect(service.getSegmentLength(url)).toBe(2000000);
+  });
+
+  test('partial 206 Content-Length without Content-Range is not a full object length', async () => {
+    const url = 'https://cdn.example.com/partial-without-total.image';
+    safeFetch
+      .mockResolvedValueOnce({ status: 206, headers: fakeHeaders({ 'content-length': '65536' }) })
+      .mockResolvedValueOnce({ status: 200, headers: fakeHeaders({ 'content-length': '3333042' }) });
+    expect(await service.probeContentLength(url)).toBe(3333000);
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('a failed HEAD error page cannot poison the segment length cache', async () => {
+    const url = 'https://cdn.example.com/head-denied.image';
+    safeFetch
+      .mockResolvedValueOnce({ status: 403, headers: fakeHeaders({ 'content-length': '5000042' }) })
+      .mockResolvedValueOnce({ status: 403, headers: fakeHeaders({ 'content-length': '6000042' }) });
+    expect(await service.probeContentLength(url)).toBeNull();
+    expect(service.hasValidLength(url)).toBe(false);
+    expect(service.probeFailures.has(url)).toBe(true);
+  });
+
   test('a failed probe caches NOTHING and suppresses re-probing briefly', async () => {
     const url = 'https://cdn.example.com/chunk_dead.image';
     safeFetch.mockRejectedValue(new Error('cdn blocked'));
