@@ -5,6 +5,7 @@ const undici = require('undici');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
+const { findBridgeIframe } = require('./bridgeIframe');
 const { safeFetch } = require('../impitClient');
 const { extractTeamsFromTitle } = require('../services/TeamNameExtractor');
 
@@ -332,12 +333,11 @@ class MlbLiveProvider extends BaseProvider {
           if (!isDirectProvider && /^https?:\/\//i.test(dest)) {
             try {
               const bridgeHtml = await this.fetchPage.fire(dest, { 'Referer': 'https://mlblive.net/' });
-              const iframeMatch = bridgeHtml && bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
-              if (iframeMatch) {
-                const iframeUrl = new URL(iframeMatch[1], dest);
-                if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
-                dest = iframeUrl.href;
-              }
+              const iframeUrl = findBridgeIframe(bridgeHtml, dest, url =>
+                /\.(m3u8|mp4)$/i.test(url.pathname) || this._isVidaraUrl(url.hostname) ||
+                this._isByseUrl(url.hostname) || this._isDailymotionUrl(url.hostname) ||
+                url.hostname === 'ok.ru' || url.hostname.endsWith('.ok.ru'));
+              if (iframeUrl) dest = iframeUrl;
             } catch (_) {}
           }
 

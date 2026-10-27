@@ -5,6 +5,7 @@ const undici = require('undici');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
+const { findBridgeIframe } = require('./bridgeIframe');
 
 function b64Decode(str) {
   return Buffer.from(str, 'base64');
@@ -257,12 +258,10 @@ class BasketballVideoProvider extends BaseProvider {
         if (isNbaOnTvUrl(dest)) {
           try {
             const bridgeHtml = await this.fetchPage.fire(dest);
-            const iframeMatch = bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
-            if (iframeMatch) {
-              const iframeUrl = new URL(iframeMatch[1], dest);
-              if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
-              dest = iframeUrl.href;
-            }
+            const iframeUrl = findBridgeIframe(bridgeHtml, dest, url =>
+              /\.(m3u8|mp4)$/i.test(url.pathname) || this._isByseUrl(url.hostname) ||
+              url.hostname === 'ok.ru' || url.hostname.endsWith('.ok.ru'));
+            if (iframeUrl) dest = iframeUrl;
           } catch (_) {}
         }
 

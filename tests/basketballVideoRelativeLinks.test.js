@@ -43,11 +43,11 @@ describe('BasketballVideo relative links', () => {
       expect(provider.fetchPage.fire).toHaveBeenCalledTimes(1);
     }
   );
-  test('documents that a bridge with an advertisement iframe first misses the later video iframe', async () => {
+  test('finds a known media iframe after an unrelated iframe in a bridge', async () => {
     const provider = new BasketballVideoProvider();
     provider.fetchPage.fire = jest.fn(async url => url === 'https://nbaontv.com/embed/123'
       ? '<iframe src="https://ads.example/banner"></iframe><iframe src="https://cdn.example/game.mp4"></iframe>'
       : '<a href="https://nbaontv.com/embed/123">Watch replay</a>');
-    expect(await provider.resolveStream('https://basketball-video.com/games/replay')).toEqual([]);
+    expect((await provider.resolveStream('https://basketball-video.com/games/replay')).map(s => s.url)).toEqual(['https://cdn.example/game.mp4']);
   });
 });

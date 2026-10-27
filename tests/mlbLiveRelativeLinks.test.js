@@ -3,6 +3,13 @@ jest.mock('../src/impitClient', () => ({ safeFetch: jest.fn() }));
 const MlbLiveProvider = require('../src/providers/MlbLiveProvider');
 
 describe('MLBLive relative stream links', () => {
+  test('finds a media iframe after an unrelated bridge iframe', async () => {
+    const provider = new MlbLiveProvider();
+    provider.fetchPage.fire = jest.fn(async url => url.endsWith('/bridge/123')
+      ? '<iframe src="https://ads.example/banner"></iframe><iframe src="../video/game.mp4"></iframe>'
+      : '<a href="../bridge/123">Watch</a>');
+    expect((await provider.resolveStream('https://mlblive.net/games/replay')).map(s => s.url)).toEqual(['https://mlblive.net/video/game.mp4']);
+  });
   test('continues to the next replay when one extractor fails', async () => {
     const provider = new MlbLiveProvider();
     provider.fetchPage.fire = jest.fn().mockResolvedValue('<a href="https://byse.example/embed/1">Watch</a><a href="https://cdn.example/game.mp4">Watch</a>');
