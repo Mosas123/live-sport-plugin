@@ -31,16 +31,22 @@ export async function route(req, res) {
     return
   }
 
-  const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()
-  const host = req.headers['x-forwarded-host'] || req.headers.host
-  
-  let baseOrigin = process.env.BASE_URL || `${proto}://${host}`
-  if (req.headers['x-forwarded-host']) {
-    const fwHost = req.headers['x-forwarded-host'].split(',')[0].trim()
-    baseOrigin = `${proto}://${fwHost}`
-  }
+  let loc
+  try {
+    const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()
+    const host = req.headers['x-forwarded-host'] || req.headers.host
 
-  const loc = new URL(req.url ?? '/', baseOrigin)
+    let baseOrigin = process.env.BASE_URL || `${proto}://${host}`
+    if (req.headers['x-forwarded-host']) {
+      const fwHost = req.headers['x-forwarded-host'].split(',')[0].trim()
+      baseOrigin = `${proto}://${fwHost}`
+    }
+
+    loc = new URL(req.url ?? '/', baseOrigin)
+  } catch {
+    json(res, 400, { ok: false, error: 'invalid request URL' })
+    return
+  }
   const { pathname, searchParams, origin } = loc
 
   try {
@@ -61,7 +67,13 @@ export async function route(req, res) {
       return
     }
     if (pathname.startsWith('/api/cache/')) {
-      const key = decodeURIComponent(pathname.slice('/api/cache/'.length))
+      let key
+      try {
+        key = decodeURIComponent(pathname.slice('/api/cache/'.length))
+      } catch {
+        json(res, 400, { ok: false, error: 'invalid cache key encoding' })
+        return
+      }
       if (!key) {
         json(res, 400, { ok: false, error: 'missing key' })
         return
