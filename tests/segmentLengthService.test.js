@@ -28,6 +28,17 @@ describe('SegmentLengthService', () => {
     expect(service.alignToTsPacket(100)).toBe(188); // floor guard
   });
 
+  test('local guarded capacity denial releases the probe without recording a CDN failure', async () => {
+    safeFetch.mockRejectedValueOnce(Object.assign(new Error('Local capacity'), { code: 'ERR_OUTBOUND_CAPACITY' }));
+    const svc = new SegmentLengthService({ maxSize: 10 });
+    const url = 'https://cdn.example.com/capacity.image';
+    expect(await svc.probeContentLength(url)).toBeNull();
+    expect(svc.probeFailures.has(url)).toBe(false);
+    expect(svc.activeProbes).toBe(0); expect(svc.inFlightProbes.size).toBe(0);
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+    svc.clear();
+  });
+
   test('returns cached length if available and not expired', () => {
     const url = 'https://cdn.example.com/chunk_1.image';
     service.setCachedLength(url, 500000);

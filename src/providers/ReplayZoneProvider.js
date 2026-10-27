@@ -1,4 +1,4 @@
-const undici = require('undici');
+const undici = require('../services/ProviderOutbound');
 const crypto = require('crypto');
 const { unpack } = require('./deanEdwardsUnpack');
 const { BASE_URL: CONFIG_BASE_URL } = require('../config');

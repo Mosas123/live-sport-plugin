@@ -144,6 +144,7 @@ class SegmentLengthService {
     const probePromise = (async () => {
       try {
         const ranged = await safeFetch(segmentUrl, {
+          guardExternal: true,
           method: 'GET',
           headers: { ...headers, Range: 'bytes=0-0' },
           timeoutMs: 4000,
@@ -158,7 +159,7 @@ class SegmentLengthService {
         }
 
         // HEAD fallback for CDNs that allow it (Content-Length = full object).
-        const head = await safeFetch(segmentUrl, { method: 'HEAD', headers, timeoutMs: 4000, attempts: 1 });
+        const head = await safeFetch(segmentUrl, { method: 'HEAD', headers, timeoutMs: 4000, attempts: 1, guardExternal: true });
         const headTotal = head && head.headers ? this._totalLengthFromHeaders(head.headers) : 0;
         if (headTotal > CLOAKED_PREFIX_BYTES) {
           const videoBytes = headTotal - CLOAKED_PREFIX_BYTES;
@@ -166,7 +167,10 @@ class SegmentLengthService {
           this.probeFailures.delete(segmentUrl);
           return videoBytes;
         }
-      } catch (_) {}
+      } catch (error) {
+        // Local transport admission is not evidence that the CDN probe failed.
+        if (error.code === 'ERR_OUTBOUND_CAPACITY') return null;
+      }
 
       // Probe failed: cache NOTHING. A cached estimate would be served as
       // truth for the entry's whole TTL and never re-probed — the failure

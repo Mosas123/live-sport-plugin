@@ -96,15 +96,7 @@ function getVanillaImpit() {
   return _impitVanillaInstance;
 }
 
-function isDamitvTarget(url) {
-  if (!url || typeof url !== 'string') return false;
-  return url.includes('damitv.st');
-}
-
-function isDembedTarget(url) {
-  if (!url || typeof url !== 'string') return false;
-  return url.includes('dembed.st');
-}
+const { isDamitvTarget, isDembedTarget, providerRequestHeaders } = require('./services/ProviderRequestHeaders');
 
 // -- impit TLS skip list ------------------------------------------------------
 // rustls (impit's TLS) validates certificates against a curated root store and
@@ -285,6 +277,11 @@ function isDeadHost(url) {
 }
 
 async function safeFetch(url, opts = {}) {
+  // Local integration candidate: public metadata callers share guarded native
+  // and Undici transports; neither fallback can bypass destination validation.
+  if (opts.guardExternal === true) {
+    return require('./services/SharedOutboundFetch').fetchSharedOutbound(url, opts);
+  }
   const deadMatch = isDeadHost(url);
   if (deadMatch) {
     return {
@@ -348,29 +345,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
     : (isDamitv ? (getVanillaImpit() || getImpit()) : (impitTlsBlocked(url) ? null : getImpit()));
   const maxAttempts = Math.max(1, attempts);
 
-  if (isDamitv) {
-    const headerKeys = Object.keys(headers || {});
-    const uaKey = headerKeys.find(k => k.toLowerCase() === 'user-agent');
-    const currentUa = uaKey ? headers[uaKey] : '';
-    const hasValidUa = currentUa && !currentUa.includes('Chrome/127');
-    const hasRef = headerKeys.some(k => k.toLowerCase() === 'referer');
-    headers = {
-      ...headers,
-      ...(hasValidUa ? {} : { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' }),
-      ...(hasRef ? {} : { 'Referer': 'https://damitv.st/' }),
-    };
-  } else if (isDembed) {
-    const headerKeys = Object.keys(headers || {});
-    const hasUa = headerKeys.some(k => k.toLowerCase() === 'user-agent');
-    const hasRef = headerKeys.some(k => k.toLowerCase() === 'referer');
-    const hasDest = headerKeys.some(k => k.toLowerCase() === 'sec-fetch-dest');
-    headers = {
-      ...(hasUa ? {} : { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' }),
-      ...(hasRef ? {} : { 'Referer': 'https://dlive.sx/' }),
-      ...(hasDest ? {} : { 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'cross-site' }),
-      ...headers,
-    };
-  }
+  headers = providerRequestHeaders(url, headers);
 
   // -- Path A: impit ---------------------------------------------------------
   if (impit) {

@@ -2,13 +2,12 @@ const container = require('./container');
 const ChannelCountryService = require('./services/ChannelCountryService');
 const ChannelIdentityService = require('./services/ChannelIdentityService');
 const { withRetry, isTransientStatus, isTransientError } = require('./services/retry');
-const { rewriteHlsUri } = require('./services/HlsRewriteService');
+const { resolveSegmentUrl } = require('./services/HlsRewriteService');
 const { parseLanguagePriority, compareStreams } = require('./services/LanguagePriorityService');
 const { BASE_URL } = require('./config');
 const { performance } = require('perf_hooks');
 const SkTechCrypto = require('./resolver/sktech/SkTechCrypto');
 const { manifestPlaybackUrl } = require('./services/ManifestPlaybackUrl');
-const { checkOutboundUrl } = require('./services/OutboundUrlGuard');
 
 // Source selection (shared by handleStream and prewarmMatch)
 function detectChannelCountry(channelName) {
@@ -328,7 +327,7 @@ async function resolveSource(src, match, config) {
 
 // Safe impit+undici helper — works on all platforms (Windows, Linux x64/ARM64, musl).
 // impit is tried first for browser TLS fingerprinting; undici is the automatic fallback.
-const { safeFetch: _safeFetch } = require('./impitClient');
+const { safeFetch: _safeFetch, streamingFetch: _streamingFetch } = require('./services/ProviderOutbound');
 
 // How long one verification ping may take, and how long all its retries may
 // take together. The total stays under handleStream's soft deadline so a
@@ -343,7 +342,7 @@ const VERIFY_ATTEMPTS = Number(process.env.VERIFY_ATTEMPTS || 3);
 const SPEED_PROBE_TIMEOUT_MS = Math.max(250, Math.min(10000, Number(process.env.SPEED_PROBE_TIMEOUT_MS) || 5000));
 const SPEED_PROBE_RANGE_BYTES = Math.floor(Math.max(16 * 1024, Math.min(1024 * 1024, Number(process.env.SPEED_PROBE_RANGE_BYTES) || 524288)));
 const SPEED_PROBE_MIN_BYTES = Math.floor(Math.max(1, Math.min(SPEED_PROBE_RANGE_BYTES, Number(process.env.SPEED_PROBE_MIN_BYTES) || 32768)));
-const ENABLE_SPEED_PROBE = process.env.ENABLE_SPEED_PROBE !== 'false';
+const ENABLE_SPEED_PROBE = process.env.ENABLE_SPEED_PROBE === 'true';
 
 // Proxied /api/manifest URLs wrap an upstream token that expires on its own
 // schedule. Tag the URL with the resolve-cache key that produced it so the
@@ -375,65 +374,14 @@ function parseManifestProxyUrl(rawUrl) {
   }
 }
 
-// Build the exact URL the player would fetch for this segment, so the probe
-// measures the real playback path (CF worker / hlschunk / direct) and not a
-// shortcut that bypasses it.
-function buildPlayerSegmentUrl(segmentUri, manifestUrl, referer, origin) {
-  return rewriteHlsUri(segmentUri, manifestUrl, { referer, origin, absoluteAddonBaseUrl: BASE_URL });
+// Probe the upstream segment directly; never request the addon's signed redirect.
+function buildProbeSegmentUrl(segmentUri, manifestUrl) {
+  return resolveSegmentUrl(segmentUri, manifestUrl);
 }
 
-// The only intentional self-request is our signed zero-byte-relay redirect.
-// Matching the base origin alone would also exempt unrelated add-on endpoints.
-function isSignedAddonRedirect(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.origin === new URL(BASE_URL).origin &&
-      /^\/(?:api\/)?hls\/resource\/[^/]+\/media\.ts$/.test(parsed.pathname);
-  } catch (_) {
-    return false;
-  }
-}
-
-// Only a short, validated redirect chain is permitted. Do not let fetch()
-// automatically follow a Location that has not passed the outbound URL guard.
+// Stream only the bounded speed sample through the shared guarded transport.
 async function guardedProbeFetch(url, options = {}) {
-  let currentUrl = url;
-  const maxRedirects = 2;
-  for (let hop = 0; hop <= maxRedirects; hop++) {
-    if (!isSignedAddonRedirect(currentUrl)) {
-      const verdict = await checkOutboundUrl(currentUrl);
-      if (!verdict || verdict.ok !== true) {
-        const error = new Error('Blocked speed-probe URL: ' + (verdict && verdict.reason || 'validation_failed'));
-        error.code = 'EOUTBOUNDURLBLOCKED';
-        error.statusCode = 403;
-        throw error;
-      }
-    }
-
-    const response = await fetch(currentUrl, { ...options, redirect: 'manual' });
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-
-    const location = response.headers && response.headers.get('location');
-    if (!location) return response;
-    try { await response.body?.cancel?.(); } catch (_) {}
-    if (hop >= maxRedirects) {
-      const error = new Error('Speed-probe redirect limit exceeded');
-      error.code = 'ETOOMANYREDIRECTS';
-      throw error;
-    }
-
-    let nextUrl;
-    try {
-      nextUrl = new URL(location, currentUrl);
-    } catch (_) {
-      throw new Error('Invalid speed-probe redirect URL');
-    }
-    if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
-      throw new Error('Blocked speed-probe redirect protocol');
-    }
-    currentUrl = nextUrl.toString();
-  }
-  throw new Error('Speed-probe redirect limit exceeded');
+  return _streamingFetch(url, options);
 }
 
 // Count at most the requested bytes, then cancel. Without a streaming response,
@@ -513,7 +461,7 @@ async function measureStreamSpeed(stream, manifestUrl, manifestText, referer, or
       stream._isTikTok = true;
     }
 
-    const segmentUrl = buildPlayerSegmentUrl(info.firstSegmentUri, manifestUrl, referer, origin);
+    const segmentUrl = buildProbeSegmentUrl(info.firstSegmentUri, manifestUrl);
     const controller = new AbortController();
     const probeTimeoutMs = Math.max(1, Math.min(SPEED_PROBE_TIMEOUT_MS, timeLeft - 150));
     const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
@@ -526,7 +474,7 @@ async function measureStreamSpeed(stream, manifestUrl, manifestText, referer, or
     try {
       const start = performance.now();
       const response = await withRetry(
-        () => guardedProbeFetch(segmentUrl, { signal: controller.signal, headers: probeHeaders }),
+        () => guardedProbeFetch(segmentUrl, { signal: controller.signal, headers: probeHeaders, timeoutMs: probeTimeoutMs, redirect: 'manual' }),
         {
           attempts: 1,
           deadlineAt,
@@ -1817,6 +1765,7 @@ module.exports = {
   // down, and driving it through handleStream would need the whole match cache.
   verifyStreams,
   guardedProbeFetch,
+  buildProbeSegmentUrl,
   readProbeBytes,
   // Exported for direct unit testing of the resolution deduplication algorithm
   // without requiring a live container / IoC / match-cache setup.
