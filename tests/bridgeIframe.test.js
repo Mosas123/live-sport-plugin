@@ -21,3 +21,14 @@ test('recognizes configured domains and subdomains but not lookalikes', () => {
   expect(isByseHost('bysexyz.com')).toBe(true);
   expect(isByseHost('bysexyz.com.attacker.example')).toBe(false);
 });
+test('decodes HTML entities in a signed iframe URL without altering the token', () => {
+  const html = '<iframe src="https://cdn.example/game.m3u8?token=a%2Bb%3D&amp;expires=123"></iframe>';
+  expect(findBridgeIframe(html, base, known)).toBe('https://cdn.example/game.m3u8?token=a%2Bb%3D&expires=123');
+});
+test('ignores data-src when no src attribute exists', () => {
+  const html = '<iframe data-src="https://ads.example/game.mp4"></iframe><iframe src="https://cdn.example/game.mp4"></iframe>';
+  expect(findBridgeIframe(html, base, known)).toBe('https://cdn.example/game.mp4');
+});
+test('accepts a single-quoted iframe source', () => {
+  expect(findBridgeIframe("<iframe src='https://cdn.example/game.mp4'></iframe>", base, known)).toBe('https://cdn.example/game.mp4');
+});

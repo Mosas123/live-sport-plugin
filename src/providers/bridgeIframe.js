@@ -1,22 +1,22 @@
 'use strict';
+const cheerio = require('cheerio');
 
 // Only inspect a bounded number of iframe tags; this does not fetch any page.
 // Prefer a candidate already understood by the provider, while retaining the
 // first valid iframe as the existing fallback for unknown player formats.
 function findBridgeIframe(html, baseUrl, isKnownPlayer, maxCandidates = 8) {
   if (typeof html !== 'string') return null;
+  const $ = cheerio.load(html);
   let fallback = null;
-  let count = 0;
-  const pattern = /<iframe[^>]+src="([^"]+)"/gi;
-  for (const match of html.matchAll(pattern)) {
-    if (++count > maxCandidates) break;
+  let known = null;
+  $('iframe[src]').slice(0, maxCandidates).each((_index, element) => {
     let parsed;
-    try { parsed = new URL(match[1], baseUrl); } catch (_) { continue; }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) continue;
+    try { parsed = new URL($(element).attr('src'), baseUrl); } catch (_) { return; }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return;
     if (!fallback) fallback = parsed.href;
-    if (isKnownPlayer(parsed)) return parsed.href;
-  }
-  return fallback;
+    if (isKnownPlayer(parsed)) { known = parsed.href; return false; }
+  });
+  return known || fallback;
 }
 
 function matchesHost(host, domain) {
