@@ -158,6 +158,33 @@ const _undiciAgent = new Agent({
 // redirect loop costs about what a single timed-out request costs.
 const MAX_REDIRECT_HOPS = 5;
 
+// Fixed-name credential filter for the manual undici redirect path. Custom
+// provider credentials (e.g. X-Api-Key) are not classified and remain intact.
+// Removed credentials stay removed even if a later hop returns to the source;
+// providers with authenticated A -> B -> A chains need compatibility review.
+const CROSS_ORIGIN_SENSITIVE_HEADERS = new Set([
+  'authorization', 'cookie', 'cookie2', 'proxy-authorization', 'host',
+]);
+
+function withoutRedirectCredentials(headers) {
+  if (!headers) return headers;
+  const keep = name => !CROSS_ORIGIN_SENSITIVE_HEADERS.has(String(name).toLowerCase());
+  // Undici accepts a flat [name, value, name, value] header list.
+  if (Array.isArray(headers) && headers.every(value => typeof value === 'string')) {
+    const kept = [];
+    for (let i = 0; i + 1 < headers.length; i += 2) {
+      if (keep(headers[i])) kept.push(headers[i], headers[i + 1]);
+    }
+    return kept;
+  }
+  // Headers, Maps and other pair iterables must be normalized to an
+  // undici-compatible flat list without mutating their caller-owned values.
+  if (typeof headers[Symbol.iterator] === 'function') {
+    return Array.from(headers).filter(([name]) => keep(name)).flat();
+  }
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => keep(name)));
+}
+
 /**
  * Read at most maxBytes from a Fetch-style or Undici response body.
  * The caller can distinguish a complete body from a prefix sample.
@@ -480,6 +507,12 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
       nextUrl = new URL(rawLocation, currentUrl);
     } catch (_) { break; }
     if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') break;
+
+    // Compare full origins (scheme, host, effective port), not hostname alone.
+    // Credentials remain removed if a later redirect returns to the old host.
+    if (nextUrl.origin !== new URL(currentUrl).origin) {
+      headers = withoutRedirectCredentials(headers);
+    }
 
     if (method !== 'HEAD' && res.statusCode !== 307 && res.statusCode !== 308) {
       method = 'GET';
