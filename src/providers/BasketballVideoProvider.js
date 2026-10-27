@@ -5,7 +5,7 @@ const undici = require('undici');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
-const { findBridgeIframe, matchesHost, isByseHost } = require('./bridgeIframe');
+const { findBridgeIframe, matchesHost, isByseHost, playerHostname } = require('./bridgeIframe');
 
 function b64Decode(str) {
   return Buffer.from(str, 'base64');
@@ -274,7 +274,7 @@ class BasketballVideoProvider extends BaseProvider {
         }
 
         // 2. OK.ru Direct Video Extraction (1080p, 720p, 480p, Auto HLS)
-        if (dest.includes('ok.ru')) {
+        if (matchesHost(playerHostname(dest), 'ok.ru')) {
           const extracted = await this._extractOkRu(dest, partName);
           if (extracted && extracted.length > 0) {
             okStreams.push(...extracted);
@@ -411,8 +411,7 @@ class BasketballVideoProvider extends BaseProvider {
   }
 
   _isByseUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    return /byse[a-z0-9]*\.[a-z]+/i.test(url);
+    return isByseHost(playerHostname(url));
   }
 
   _decryptBysePlayback(playback) {

@@ -27,4 +27,15 @@ function isByseHost(host) {
   return /(?:^|\.)byse[a-z0-9]*\.[a-z]+$/i.test(host);
 }
 
-module.exports = { findBridgeIframe, matchesHost, isByseHost };
+function playerHostname(rawUrl) {
+  if (typeof rawUrl !== 'string') return '';
+  try {
+    const url = new URL(rawUrl.startsWith('//') ? 'https:' + rawUrl : rawUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
+    return url.hostname;
+  } catch (_) {
+    return '';
+  }
+}
+
+module.exports = { findBridgeIframe, matchesHost, isByseHost, playerHostname };

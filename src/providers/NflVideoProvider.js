@@ -5,7 +5,7 @@ const undici = require('undici');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
-const { findBridgeIframe, matchesHost, isByseHost } = require('./bridgeIframe');
+const { findBridgeIframe, matchesHost, isByseHost, playerHostname } = require('./bridgeIframe');
 
 function b64Decode(str) {
   return Buffer.from(str, 'base64');
@@ -313,7 +313,7 @@ class NflVideoProvider extends BaseProvider {
           }
 
           // 5. OK.ru Direct Video Extraction (1080p, 720p, 480p, Auto HLS)
-          if (dest.includes('ok.ru')) {
+          if (matchesHost(playerHostname(dest), 'ok.ru')) {
             const extracted = await this._extractOkRu(dest, partName);
             for (const s of extracted) {
               if (!seenUrls.has(s.url)) {
@@ -451,8 +451,7 @@ class NflVideoProvider extends BaseProvider {
   }
 
   _isByseUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    return /byse[a-z0-9]*\.[a-z]+/i.test(url);
+    return isByseHost(playerHostname(url));
   }
 
   _decryptBysePlayback(playback) {
@@ -564,18 +563,15 @@ class NflVideoProvider extends BaseProvider {
   }
 
   _isVidaraUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    return /vidara\.so/i.test(url);
+    return matchesHost(playerHostname(url), 'vidara.so');
   }
 
   _isDailymotionUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    return /(?:dailymotion\.com|dai\.ly|geo\.dailymotion\.com)/i.test(url);
+    return ['dailymotion.com', 'dai.ly'].some(domain => matchesHost(playerHostname(url), domain));
   }
 
   _isDTubeUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    return /(?:play\.d\.tube|d\.tube)/i.test(url);
+    return matchesHost(playerHostname(url), 'd.tube');
   }
 
   _extractDailymotionVideoId(url) {
