@@ -26,4 +26,17 @@ describe('LiveTV replay iframe resolution', () => {
     expect(streams).toEqual(expect.arrayContaining([expect.objectContaining({ url: 'https://cdn.example/replay.mp4' })]));
     expect(safeFetch).toHaveBeenCalledWith('https://embed.example/video/player', expect.any(Object));
   });
+
+  test('keeps looking for a video source when an iframe URL is malformed', async () => {
+    safeFetch.mockImplementation(async (url) => {
+      const pages = {
+        'https://livetv.sx/enx/showvideo/123': '<meta property="og:video" content="https://embed.example/nested/page">',
+        'https://embed.example/nested/page': '<iframe src="http://["></iframe><source src="https://cdn.example/replay.mp4">',
+      };
+      if (!pages[url]) throw new Error(`Unexpected URL ${url}`);
+      return { ok: true, text: async () => pages[url] };
+    });
+    const streams = await new LiveTVProvider().resolveStream('/enx/showvideo/123');
+    expect(streams).toEqual(expect.arrayContaining([expect.objectContaining({ url: 'https://cdn.example/replay.mp4' })]));
+  });
 });
