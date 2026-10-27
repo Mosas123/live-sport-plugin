@@ -846,6 +846,9 @@ app.use(require('./routes/hlsResource'));
 app.use(require('./routes/embed'));
 // Zero-bandwidth DASH→HLS converter (must stay above the /api resolver proxy)
 app.use(require('./routes/dash'));
+// Internal resolver cache APIs are used directly over loopback by cluster workers.
+// Only the resolver's stream and health endpoints may cross the public /api proxy.
+app.use('/api', require('./services/PublicResolverApiGate'));
 // Mount the HLS Video Proxy (routes to the internal resolver on port RESOLVER_PORT)
 app.use('/api', createProxyMiddleware({
   target: `http://127.0.0.1:${RESOLVER_PORT}/api`,
