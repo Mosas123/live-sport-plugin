@@ -135,7 +135,7 @@ function buildManifestProxyUrl(upstreamUrl, opts = {}) {
   let manifestPath = `/api/manifest?url=${encodeURIComponent(upstreamUrl)}`;
   if (referer) manifestPath += `&referer=${encodeURIComponent(referer)}`;
   if (origin) manifestPath += `&origin=${encodeURIComponent(origin)}`;
-  if (userAgent) manifestPath += `&ua=${encodeURIComponent(userAgent)}`;
+  if (userAgent) manifestPath += `&hlsua=${encodeURIComponent(userAgent)}`;
   manifestPath += rckSuffix || '';
   return absoluteAddonBaseUrl ? new URL(manifestPath, absoluteAddonBaseUrl).toString() : manifestPath;
 }

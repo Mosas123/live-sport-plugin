@@ -596,7 +596,7 @@ class Ak47LiveProvider extends BaseProvider {
     // The provider injects DEFAULT_UA even when no source specified one. Keep
     // the proxy's historical default in that case.
     const manifestUa = userAgent === DEFAULT_UA ? '' : manifestUserAgent(userAgent);
-    const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}${manifestUa ? `&ua=${encodeURIComponent(manifestUa)}` : ''}`;
+    const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}${manifestUa ? `&hlsua=${encodeURIComponent(manifestUa)}` : ''}`;
 
     const stream = new StreamEntity({
       name: 'Ak47Live',

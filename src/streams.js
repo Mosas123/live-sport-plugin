@@ -8,6 +8,7 @@ const { BASE_URL } = require('./config');
 const { performance } = require('perf_hooks');
 const SkTechCrypto = require('./resolver/sktech/SkTechCrypto');
 const { manifestPlaybackUrl } = require('./services/ManifestPlaybackUrl');
+const { manifestUserAgent } = require('./services/ManifestUserAgent');
 const { checkOutboundUrl } = require('./services/OutboundUrlGuard');
 
 // Source selection (shared by handleStream and prewarmMatch)
@@ -368,7 +369,7 @@ function parseManifestProxyUrl(rawUrl) {
       referer: urlObj.searchParams.get('referer') || '',
       origin: urlObj.searchParams.get('origin') || '',
       cookie: urlObj.searchParams.get('cookie') || '',
-      ua: urlObj.searchParams.get('ua') || '',
+      ua: manifestUserAgent(urlObj.searchParams.get('hlsua')) || urlObj.searchParams.get('ua') || '',
     };
   } catch (_) {
     return null;

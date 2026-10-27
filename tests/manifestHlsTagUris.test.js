@@ -99,12 +99,12 @@ test('ordinary segment rewrite is unchanged',async()=>{
   const r=await render('#EXT-X-TARGETDURATION:6');expect(r.body).toContain('https://cdn.example/live/segment.ts?parent=SECRET');
 });
 test('user agent follows playlist attributes but is not appended to direct media or key URLs',async()=>{
-  const r=await render('#EXT-X-MEDIA:TYPE=AUDIO,URI="audio/index.m3u8"\n#EXT-X-KEY:METHOD=AES-128,URI="keys/key.bin"',{ua:'FixtureClient/1.0'});
+  const r=await render('#EXT-X-MEDIA:TYPE=AUDIO,URI="audio/index.m3u8"\n#EXT-X-KEY:METHOD=AES-128,URI="keys/key.bin"',{hlsua:'FixtureClient/1.0'});
   const audio = new URL(r.body.match(/URI="([^"]*\/api\/manifest\?[^"]+)"/)[1], addon);
-  expect(audio.searchParams.get('ua')).toBe('FixtureClient/1.0');
+  expect(audio.searchParams.get('hlsua')).toBe('FixtureClient/1.0');
   expect(r.body).toContain('URI="https://cdn.example/live/keys/key.bin"');
   expect(r.body).toContain('https://cdn.example/live/segment.ts?parent=SECRET');
-  expect(r.body).not.toContain('segment.ts?parent=SECRET&ua=');
+  expect(r.body).not.toContain('segment.ts?parent=SECRET&hlsua=');
 });
 test('ordinary master child preserves proxy headers and recovery key',async()=>{
   const r=await render('#EXT-X-STREAM-INF:BANDWIDTH=1000\nchild.m3u8',{referer:'https://embed.example/',origin:'https://embed.example',rck:'provider:match:source'});

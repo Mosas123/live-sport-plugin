@@ -61,14 +61,14 @@ test('publication keeps source headers on direct HLS but drops them on proxied H
   const end = text.indexOf('\n  });', start);
   const publish = vm.runInNewContext('(function(s,providerName){' + text.slice(start, end) + '\nreturn s;})', { manifestPlaybackUrl, BASE_URL: base });
   const direct = { url: 'https://cdn.example.invalid/live.m3u8', behaviorHints: { proxyHeaders: { request: { 'User-Agent': 'FixtureClient/1.0' } } } };
-  const proxied = { url: base + '/api/manifest?url=' + encodeURIComponent(direct.url) + '&ua=FixtureClient%2F1.0', behaviorHints: { proxyHeaders: { request: { 'User-Agent': 'FixtureClient/1.0' } } } };
+  const proxied = { url: base + '/api/manifest?url=' + encodeURIComponent(direct.url) + '&hlsua=FixtureClient%2F1.0', behaviorHints: { proxyHeaders: { request: { 'User-Agent': 'FixtureClient/1.0' } } } };
   publish(direct, 'Ak47Live');
   publish(proxied, 'Ak47Live');
   assert.equal(direct.behaviorHints.notWebReady, false);
   assert.equal(direct.behaviorHints.proxyHeaders.request['User-Agent'], 'FixtureClient/1.0');
   assert.equal(proxied.behaviorHints.notWebReady, false);
   assert.equal(proxied.behaviorHints.proxyHeaders, undefined);
-  assert.equal(new URL(proxied.url).searchParams.get('ua'), 'FixtureClient/1.0');
+  assert.equal(new URL(proxied.url).searchParams.get('hlsua'), 'FixtureClient/1.0');
 });
 
 function fixture(body) {

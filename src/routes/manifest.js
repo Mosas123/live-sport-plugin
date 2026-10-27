@@ -38,7 +38,7 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
   const defaultOrigin = isVavooTarget ? 'https://vavoo.to' : 'https://embed.st';
   const referer = req.query.referer || defaultReferer;
   const origin = req.query.origin || defaultOrigin;
-  const userAgent = manifestUserAgent(req.query.ua);
+  const userAgent = manifestUserAgent(req.query.hlsua);
 
   if (!targetUrl) return res.status(400).send('Missing url');
   if (targetUrl.includes('.mpd')) return handleDashManifestProxy(req, res);
