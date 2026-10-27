@@ -327,79 +327,84 @@ class MlbLiveProvider extends BaseProvider {
           continue;
         }
 
-        const isDirectProvider = /ok\.ru|byse|vidara|dailymotion|dai\.ly|d\.tube|\.(?:m3u8|mp4)/i.test(dest);
-        if (!isDirectProvider && /^https?:\/\//i.test(dest)) {
-          try {
-            const bridgeHtml = await this.fetchPage.fire(dest, { 'Referer': 'https://mlblive.net/' });
-            const iframeMatch = bridgeHtml && bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
-            if (iframeMatch) {
-              const iframeUrl = new URL(iframeMatch[1], dest);
-              if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
-              dest = iframeUrl.href;
-            }
-          } catch (_) {}
-        }
+        try {
+          const isDirectProvider = /ok\.ru|byse|vidara|dailymotion|dai\.ly|d\.tube|\.(?:m3u8|mp4)/i.test(dest);
+          if (!isDirectProvider && /^https?:\/\//i.test(dest)) {
+            try {
+              const bridgeHtml = await this.fetchPage.fire(dest, { 'Referer': 'https://mlblive.net/' });
+              const iframeMatch = bridgeHtml && bridgeHtml.match(/<iframe[^>]+src="([^"]+)"/i);
+              if (iframeMatch) {
+                const iframeUrl = new URL(iframeMatch[1], dest);
+                if (!['http:', 'https:'].includes(iframeUrl.protocol)) continue;
+                dest = iframeUrl.href;
+              }
+            } catch (_) {}
+          }
 
-        // 1. Vidara API resolution
-        if (this._isVidaraUrl(dest)) {
-          const extracted = await this._extractVidara(dest, partName);
-          for (const s of extracted) {
-            if (!seenUrls.has(s.url)) {
-              seenUrls.add(s.url);
-              vidaraStreams.push(s);
+          // 1. Vidara API resolution
+          if (this._isVidaraUrl(dest)) {
+            const extracted = await this._extractVidara(dest, partName);
+            for (const s of extracted) {
+              if (!seenUrls.has(s.url)) {
+                seenUrls.add(s.url);
+                vidaraStreams.push(s);
+              }
+            }
+            continue;
+          }
+
+          // 2. Byse AES-256-GCM Payload Extraction (SprintCDN Edge)
+          if (this._isByseUrl(dest)) {
+            const extracted = await this._extractByse(dest, partName);
+            for (const s of extracted) {
+              if (!seenUrls.has(s.url)) {
+                seenUrls.add(s.url);
+                byseStreams.push(s);
+              }
+            }
+            continue;
+          }
+
+          // 3. Dailymotion Direct HLS / Player metadata
+          if (this._isDailymotionUrl(dest)) {
+            const extracted = await this._extractDailymotion(dest, partName);
+            for (const s of extracted) {
+              if (!seenUrls.has(s.url)) {
+                seenUrls.add(s.url);
+                dmStreams.push(s);
+              }
+            }
+            continue;
+          }
+
+          // 4. OK.ru Direct Video Extraction (1080p, 720p, 480p, Auto HLS)
+          if (dest.includes('ok.ru')) {
+            const extracted = await this._extractOkRu(dest, partName);
+            for (const s of extracted) {
+              if (!seenUrls.has(s.url)) {
+                seenUrls.add(s.url);
+                okStreams.push(s);
+              }
+            }
+            continue;
+          }
+
+          // 5. Direct Media File
+          if (/\.(m3u8|mp4)(?:[?#]|$)/i.test(dest)) {
+            if (!seenUrls.has(dest)) {
+              seenUrls.add(dest);
+              directStreams.push(new StreamEntity({
+                name: this.name,
+                title: `${partName} (Direct)`,
+                resolution: '1080p',
+                url: dest,
+                behaviorHints: { notWebReady: false }
+              }));
             }
           }
+        } catch (_) {
+          // A broken candidate should not hide later replay sources.
           continue;
-        }
-
-        // 2. Byse AES-256-GCM Payload Extraction (SprintCDN Edge)
-        if (this._isByseUrl(dest)) {
-          const extracted = await this._extractByse(dest, partName);
-          for (const s of extracted) {
-            if (!seenUrls.has(s.url)) {
-              seenUrls.add(s.url);
-              byseStreams.push(s);
-            }
-          }
-          continue;
-        }
-
-        // 3. Dailymotion Direct HLS / Player metadata
-        if (this._isDailymotionUrl(dest)) {
-          const extracted = await this._extractDailymotion(dest, partName);
-          for (const s of extracted) {
-            if (!seenUrls.has(s.url)) {
-              seenUrls.add(s.url);
-              dmStreams.push(s);
-            }
-          }
-          continue;
-        }
-
-        // 4. OK.ru Direct Video Extraction (1080p, 720p, 480p, Auto HLS)
-        if (dest.includes('ok.ru')) {
-          const extracted = await this._extractOkRu(dest, partName);
-          for (const s of extracted) {
-            if (!seenUrls.has(s.url)) {
-              seenUrls.add(s.url);
-              okStreams.push(s);
-            }
-          }
-          continue;
-        }
-
-        // 5. Direct Media File
-        if (/\.(m3u8|mp4)(?:[?#]|$)/i.test(dest)) {
-          if (!seenUrls.has(dest)) {
-            seenUrls.add(dest);
-            directStreams.push(new StreamEntity({
-              name: this.name,
-              title: `${partName} (Direct)`,
-              resolution: '1080p',
-              url: dest,
-              behaviorHints: { notWebReady: false }
-            }));
-          }
         }
       }
 

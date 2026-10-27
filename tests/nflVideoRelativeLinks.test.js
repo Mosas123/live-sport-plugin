@@ -2,6 +2,14 @@
 const NflVideoProvider = require('../src/providers/NflVideoProvider');
 
 describe('NFLVideo relative stream links', () => {
+  test('continues to the next replay when one extractor fails', async () => {
+    const provider = new NflVideoProvider();
+    provider.fetchPage.fire = jest.fn().mockResolvedValue('<a href="https://byse.example/embed/1">Watch</a><a href="https://cdn.example/game.mp4">Watch</a>');
+    provider._extractByse = jest.fn().mockRejectedValue(new Error('fixture extractor failed'));
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try { expect((await provider.resolveStream('https://nfl-video.com/games/replay')).map(s => s.url)).toEqual(['https://cdn.example/game.mp4']); }
+    finally { log.mockRestore(); }
+  });
   test('resolves a relative media link against the replay page', async () => {
     const provider = new NflVideoProvider();
     provider.fetchPage.fire = jest.fn().mockResolvedValue('<a href="../video/game.mp4">Watch replay</a>');
