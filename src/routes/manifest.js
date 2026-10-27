@@ -76,9 +76,9 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
           }
         }
 
-        let out;
+        let upstream;
         try {
-          out = await fetchUpstreamManifest(effectiveUrl, referer, origin);
+          upstream = await fetchUpstreamManifest(effectiveUrl, referer, origin, { withResponseUrl: true });
         } catch (firstErr) {
           const fresh = (isExpiryStatus(firstErr) && rck) ? await attemptRemint(rck, effectiveUrl || targetUrl) : null;
           if (!fresh || fresh === effectiveUrl) throw firstErr;
@@ -108,8 +108,12 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
           // Preserve the variant the player asked for (see mergeRemintedUrl).
           effectiveUrl = mergeRemintedUrl(targetUrl, fresh, rck);
           reminted = true;
-          out = await fetchUpstreamManifest(effectiveUrl, referer, origin);
+          upstream = await fetchUpstreamManifest(effectiveUrl, referer, origin, { withResponseUrl: true });
         }
+        const out = upstream.body;
+        // Re-fetch redirected bases on later polls; concurrent viewers still coalesce.
+        const cacheable = !upstream.url || upstream.url === effectiveUrl;
+        effectiveUrl = upstream.url || effectiveUrl;
         if (!out.includes('#EXT')) {
           console.error('[ManifestProxy] Upstream returned non-m3u8 body for', effectiveUrl);
           throw new Error('Upstream returned non-m3u8 body');
@@ -170,19 +174,20 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
           absoluteAddonBaseUrl: getRequestBaseUrl(req),
           bitrate: out.includes('#EXT-X-STREAM-INF') ? undefined : variantBitrateCache.get(effectiveUrl)
         });
-        manifestCacheSet(cacheKey, rewrittenResult, dynamicTtl);
-        return rewrittenResult;
+        if (cacheable) manifestCacheSet(cacheKey, rewrittenResult, dynamicTtl);
+        return { body: rewrittenResult, cacheable };
       })().finally(() => {
         manifestInFlight.delete(cacheKey);
       });
       manifestInFlight.set(cacheKey, fetchPromise);
     }
 
-    const finalBody = await fetchPromise;
+    const result = await fetchPromise;
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('X-Manifest-Cache', 'MISS');
-    res.send(finalBody);
+    res.setHeader('X-Manifest-Cache', result.cacheable ? 'MISS' : 'BYPASS');
+    if (!result.cacheable) res.setHeader('Cache-Control', 'no-store');
+    res.send(result.body);
   } catch (err) {
     // Preserve the old 404 semantics so players can fail over to another stream.
     // Failures are negatively cached (15 s) so player polls stop hammering the dead upstream.
