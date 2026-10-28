@@ -47,7 +47,7 @@ test('window end records monotonic duration and unsettled work only once', () =>
   expect(relations.endWindow(stream, 4, 2)).toBe(true);
   expect(relations.endWindow(stream, 4, 0)).toBe(false);
   expect(rows).toEqual([{ type: 'stream_resolution_window_end', streamId: stream.id,
-    observedAtMs: 250, durationMs: 150, sourceCount: 4, unsettledCount: 2 }]);
+    observedAtMs: 250, durationMs: 150, sourceCount: 4, unsettledCount: 2, reason: 'unknown' }]);
 });
 
 test('cache operation can settle after stream window without implying cancellation', () => {

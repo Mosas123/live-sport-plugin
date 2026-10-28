@@ -35,9 +35,11 @@ function sharedTimingOutput() {
   if (!globalThis[outputKey]) {
     const shared = createTimingOutput(process.stdout);
     globalThis[outputKey] = shared;
+    const report = () => { try { console.info('[TimingOutputSummary]', JSON.stringify({ ...shared.stats, ...shared.identity })); } catch (_) {} };
+    const stopSnapshots = require('./TimingSnapshotTimer').startTimingSnapshotTimer(report);
     process.once('exit', () => {
       // Best effort: a forced termination or a broken stdout can lose this.
-      try { console.info('[TimingOutputSummary]', JSON.stringify({ ...shared.stats, ...shared.identity })); } catch (_) {}
+      stopSnapshots(); report();
     });
   }
   return globalThis[outputKey];

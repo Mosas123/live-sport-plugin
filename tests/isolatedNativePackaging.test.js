@@ -15,6 +15,7 @@ test('build copy manifest includes both supervisor and child alongside guarded d
   expect(copies).toContainEqual(['src/services/NativeTiming.js', 'output/services/NativeTiming.js']);
   expect(copies).toContainEqual(['src/services/TimingContext.js', 'output/services/TimingContext.js']);
   expect(copies).toContainEqual(['src/services/TimingOutput.js', 'output/services/TimingOutput.js']);
+  expect(copies).toContainEqual(['src/services/TimingSnapshotTimer.js', 'output/services/TimingSnapshotTimer.js']);
   expect(copies).toContainEqual(['src/impitClient.js', 'output/impitClient.js']);
 });
 

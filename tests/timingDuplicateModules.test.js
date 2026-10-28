@@ -8,7 +8,7 @@ function copiedModule(name) {
   const file = path.join(dir, `${name}.js`);
   fs.copyFileSync(path.join(__dirname, '..', 'src', 'services', `${name}.js`), file);
   if (name === 'TimingRuntime') {
-    for (const dependency of ['TimingRelations', 'TimingOutput']) {
+    for (const dependency of ['TimingRelations', 'TimingOutput', 'TimingSnapshotTimer']) {
       fs.copyFileSync(path.join(__dirname, '..', 'src', 'services', `${dependency}.js`), path.join(dir, `${dependency}.js`));
     }
   }

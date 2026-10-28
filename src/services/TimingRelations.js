@@ -39,14 +39,15 @@ function createTimingRelations({ emit = () => {}, emitSummary = () => {}, maxEve
       publish({ type: 'stream_work_link', streamId: stream.id, workId: work.id });
       return true;
     },
-    endWindow(stream, sourceCount, unsettledCount) {
+    endWindow(stream, sourceCount, unsettledCount, reason = 'unknown') {
       if (!streamIds.has(stream) || !starts.has(stream) || !Number.isSafeInteger(sourceCount) || sourceCount < 0 ||
-          !Number.isSafeInteger(unsettledCount) || unsettledCount < 0 || unsettledCount > sourceCount) return false;
+          !Number.isSafeInteger(unsettledCount) || unsettledCount < 0 || unsettledCount > sourceCount ||
+          !['unknown', 'all_settled', 'early_return', 'priority_completed', 'hard_wait_expired', 'budget_exhausted'].includes(reason)) return false;
       const started = starts.get(stream);
       starts.delete(stream);
       const ended = now();
       publish({ type: 'stream_resolution_window_end', streamId: stream.id,
-        observedAtMs: Math.round(ended), durationMs: Math.max(0, Math.round(ended - started)), sourceCount, unsettledCount });
+        observedAtMs: Math.round(ended), durationMs: Math.max(0, Math.round(ended - started)), sourceCount, unsettledCount, reason });
       return true;
     },
     endWork(work) {

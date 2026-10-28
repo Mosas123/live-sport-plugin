@@ -23,11 +23,14 @@ function decodeLine(line) {
   try {
     const value = JSON.parse(trimmed);
     if (!value || !['native_timing', 'stream_timing'].includes(value.kind)) return null;
-    if (!['http_start', 'http_terminal', 'source_mint_start', 'child_spawn_observed',
+    if (!['http_start', 'http_terminal', 'source_mint_start', 'stream_resolution_window_end', 'child_spawn_observed',
       'child_request_received', 'child_http_phase'].includes(value.type)) return { kind: 'other_timing' };
     const shortString = item => typeof item === 'string' && item.length <= 64 ? item : null;
     return { kind: 'event', value: { type: value.type, pid: Number.isSafeInteger(value.pid) ? value.pid : null, sessionId: shortString(value.sessionId),
       id: shortString(value.id), workId: shortString(value.workId), poolId: shortString(value.poolId), source: shortString(value.source),
+      owner: ['manifest', 'wasm', 'catalog', 'other'].includes(value.owner) ? value.owner : null,
+      streamId: shortString(value.streamId), durationMs: value.durationMs, sourceCount: value.sourceCount, unsettledCount: value.unsettledCount,
+      reason: ['all_settled', 'early_return', 'priority_completed', 'hard_wait_expired', 'budget_exhausted'].includes(value.reason) ? value.reason : 'unknown',
       outcome: ['success', 'timeout', 'canceled', 'capacity', 'error'].includes(value.outcome) ? value.outcome : null,
       phase: ['fetch_start', 'response_received', 'body_read_end'].includes(value.phase) ? value.phase : null,
       hop: Number.isSafeInteger(value.hop) && value.hop >= 0 && value.hop <= 5 ? value.hop : null,
@@ -82,11 +85,41 @@ async function summarizeStream(input, limit = MAX_TIMING_RECORDS) {
     if (snapshot.kind === 'stream') losses.streamDropped += snapshot.dropped;
     if (snapshot.kind === 'output') { losses.outputRejected += snapshot.rejected; losses.outputFailed += snapshot.failed; }
   }
+  // No observed snapshot is unknown, not evidence of zero loss. Even a
+  // present snapshot only covers its observed writer/pool and time interval.
+  if (!snapshots.native) losses.nativeDropped = null;
+  if (!snapshots.stream) losses.streamDropped = null;
+  if (!snapshots.output) { losses.outputRejected = null; losses.outputFailed = null; }
   return { timingRecords: rows.length, truncated, ignoredLines, otherTimingEvents, invalidSnapshots, duplicateSnapshots, snapshots, losses,
     // Counts can overlap; do not add nativeDropped and outputRejected together.
     // Missing summaries, unfinished work, accepted writes and forced exit leave
     // completeness unknown even if all observed counts are zero.
-    completeness: 'unknown', queue: summarizeQueue(rows), phases: summarizeHttpPhases(rows) };
+    completeness: 'unknown', queue: summarizeQueue(rows), phases: summarizeHttpPhases(rows), streamWindows: summarizeStreamWindows(rows) };
+}
+
+// An end event alone cannot prove a stream deadline fired or that missing
+// windows did not occur. Reject duplicates and malformed counts, and report
+// only the ends actually observed, scoped by writer session to avoid PID reuse.
+function summarizeStreamWindows(rows) {
+  const windows = new Map();
+  let invalid = 0, duplicate = 0;
+  for (const row of rows) {
+    if (row.type !== 'stream_resolution_window_end') continue;
+    if (!Number.isSafeInteger(row.pid) || row.pid < 1 || !/^[a-f0-9]{32}$/.test(row.sessionId || '') ||
+        !/^[a-f0-9]{32}$/.test(row.streamId || '') || !Number.isSafeInteger(row.durationMs) || row.durationMs < 0 ||
+        !Number.isSafeInteger(row.sourceCount) || row.sourceCount < 0 || !Number.isSafeInteger(row.unsettledCount) ||
+        row.unsettledCount < 0 || row.unsettledCount > row.sourceCount) { invalid++; continue; }
+    const key = `${row.pid}:${row.sessionId}:${row.streamId}`;
+    if (windows.has(key)) { windows.set(key, null); duplicate++; } else windows.set(key, row);
+  }
+  const valid = [...windows.values()].filter(Boolean);
+  const durations = valid.map(row => row.durationMs).sort((a, b) => a - b);
+  const reasons = { all_settled: 0, early_return: 0, priority_completed: 0, hard_wait_expired: 0, budget_exhausted: 0, unknown: 0 };
+  for (const row of valid) reasons[row.reason]++;
+  return { observed: valid.length, withUnsettledSources: valid.filter(row => row.unsettledCount > 0).length, reasons,
+    unsettledSources: valid.reduce((sum, row) => sum + row.unsettledCount, 0),
+    p95ObservedDurationMs: durations.length ? durations[Math.ceil(durations.length * 0.95) - 1] : null,
+    invalid, duplicate, ambiguous: windows.size - valid.length };
 }
 
 if (require.main === module) {

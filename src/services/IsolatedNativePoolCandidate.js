@@ -38,6 +38,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
   if (!Number.isFinite(admissionWaitMs) || admissionWaitMs < 0 || admissionWaitMs > 30000 || !Number.isInteger(maxWaiters) || maxWaiters < 1 || maxWaiters > 512) throw new RangeError('Invalid native admission limits');
   const children = new Map(), waiters = [], poolId = randomBytes(4).toString('hex');
   let closed = false, closing, nextSlotId = 1, admitted = 0;
+  const stopTimingSnapshots = timing.enabled ? require('./TimingSnapshotTimer').startTimingSnapshotTimer(() => timing.report?.(poolId)) : () => {};
   const capacityError = () => {
     const diagnostic = { threadId, poolId, limit: maxSlots, waiting: waiters.length, slots: [...children.values()].map(record => ({
       slotId: record.slotId, phase: record.phase, profile: record.profile, egress: record.egress,
@@ -74,7 +75,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
     get occupied() { return children.size; },
     get timingStats() { return timing.stats; },
     async fetch(url, options = {}) {
-      const trace = timing.start(poolId);
+      const trace = timing.start(poolId, options.diagnosticOwner);
       try {
         const result = await pool.fetchWithTrace(url, options, trace);
         trace.finish(); return result;
@@ -173,6 +174,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
     close() {
       if (closing) return closing;
       closed = true;
+      stopTimingSnapshots();
       for (const waiter of waiters.splice(0)) { waiter.cleanup(); waiter.reject(error('ERR_NATIVE_POOL_CLOSED', 'Native pool closed')); }
       closing = Promise.all([...children.keys()].map(child => new Promise(resolve => {
         children.get(child).phase = 'terminating';

@@ -21,10 +21,11 @@ function createNativeTiming({ enabled = false, emitStarts = false, emit = row =>
       if (!enabled) return;
       try { emitSummary({ type: 'native_timing_summary', poolId: safePoolId(poolId), emitted, dropped }); } catch (_) { /* diagnostic only */ }
     },
-    start(rawPoolId) {
+    start(rawPoolId, rawOwner) {
       if (!enabled) return { enqueued() {}, admitted() {}, spawnAttempt() {}, spawned() {}, spawnObserved() {}, requestReceived() {}, childPhase() {}, childSnapshot() {}, exited() {}, finish() {} };
       const id = randomBytes(8).toString('hex'), started = now(), workId = currentTimingWork();
       const poolId = safePoolId(rawPoolId);
+      const owner = ['manifest', 'wasm', 'catalog'].includes(rawOwner) ? rawOwner : 'other';
       if (emitStarts) publish({ type: 'http_start', id, workId, poolId });
       let enqueuedAt, admittedAt, spawnAttemptAt, spawnedAt, finished = false, exited = false, received = false, spawnObserved = false, childDiagnosticSnapshot = null;
       const seenChildPhases = new Set();
@@ -74,7 +75,7 @@ function createNativeTiming({ enabled = false, emitStarts = false, emit = row =>
           const ended = now();
           const outcome = !failure ? 'success' : failure.name === 'TimeoutError' ? 'timeout' :
             failure.name === 'AbortError' ? 'canceled' : failure.code === 'ERR_NATIVE_POOL_BUSY' ? 'capacity' : 'error';
-          publish({ type: 'http_terminal', id, workId, poolId, outcome, childDiagnosticSnapshot,
+          publish({ type: 'http_terminal', id, workId, poolId, owner, outcome, childDiagnosticSnapshot,
             duplicateChildEvents, invalidChildEvents, totalMs: elapsed(started, ended),
             queueMs: enqueuedAt === undefined ? null : elapsed(enqueuedAt, admittedAt === undefined ? ended : admittedAt),
             enqueued: enqueuedAt !== undefined, admitted: admittedAt !== undefined,

@@ -15,7 +15,26 @@ test('queue p95 uses admitted observations and reports canceled waits separately
   expect(summarizeQueue(rows)).toEqual({ groups: [{ source: 'damitv', total: 3, observed: 1, censored: 1, capacityRejected: 0,
     missing: 1, p95ObservedMs: 4 }], startsObserved: 0, startsWithoutTerminalObserved: 0,
     terminalsWithoutStartObserved: 3, observedPools: 0, terminalsWithoutPool: 3,
-    duplicateStarts: 0, duplicateTerminals: 0, ambiguousTerminals: 0, conflictingWorkSources: 0, invalidRows: 0 });
+    duplicateStarts: 0, duplicateTerminals: 0, ambiguousTerminals: 0, conflictingWorkSources: 0, invalidRows: 0,
+    attribution: { noWorkId: 0, invalidWorkId: 0, missingMintStart: 0, conflictingSource: 0, attributed: 3 },
+    noWorkOwners: { catalog: 0, manifest: 0, wasm: 0, other: 0, unknown: 0 } });
+});
+
+test('unknown attribution distinguishes absent work IDs from missing mint events without guessing cause', () => {
+  const base = { pid: 1, type: 'http_terminal', enqueued: true, admitted: true, queueMs: 1 };
+  const rows = [{ ...base, id: id(1) }, { ...base, id: id(2), workId: 'bad' },
+    { ...base, id: id(3), workId }, { ...base, id: id(4), workId: 'c'.repeat(32) },
+    { pid: 1, type: 'source_mint_start', workId: 'c'.repeat(32), source: 'damitv' }];
+  expect(summarizeQueue(rows).attribution).toEqual({ noWorkId: 1, invalidWorkId: 1, missingMintStart: 1,
+    conflictingSource: 0, attributed: 1 });
+});
+
+test('no-work traffic is broken down only by explicitly allowlisted owner labels', () => {
+  const base = { pid: 1, type: 'http_terminal', enqueued: true, admitted: true, queueMs: 1 };
+  const report = summarizeQueue([{ ...base, id: id(1), owner: 'catalog' },
+    { ...base, id: id(2), owner: 'manifest' }, { ...base, id: id(3), owner: 'secret' }, { ...base, id: id(4) }]);
+  expect(report.noWorkOwners).toEqual({ catalog: 1, manifest: 1, wasm: 0, other: 0, unknown: 2 });
+  expect(JSON.stringify(report)).not.toContain('secret');
 });
 
 test('reports unmatched starts and terminals without assuming why they are missing', () => {

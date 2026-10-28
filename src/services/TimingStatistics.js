@@ -34,12 +34,25 @@ function summarizeQueue(rows) {
   }
   const groups = new Map();
   let ambiguousTerminals = 0, terminalsWithoutPool = 0;
+  const attribution = { noWorkId: 0, invalidWorkId: 0, missingMintStart: 0, conflictingSource: 0, attributed: 0 };
+  const noWorkOwners = { catalog: 0, manifest: 0, wasm: 0, other: 0, unknown: 0 };
   for (const row of terminals.values()) {
     if (!row) { ambiguousTerminals++; continue; }
     if (typeof row.poolId === 'string' && /^[a-f0-9]{8}$/.test(row.poolId)) pools.add(`${processKey(row)}:${row.poolId}`);
     else terminalsWithoutPool++;
     const workKey = `${processKey(row)}:${row.workId}`;
     const source = validId(row.workId) && sources.has(workKey) ? sources.get(workKey) ?? 'ambiguous' : 'unknown';
+    // No work ID can be legitimate non-mint traffic, or an absent context;
+    // neither that case nor a missing event establishes a root cause.
+    if (row.workId == null) {
+      attribution.noWorkId++;
+      const owner = ['catalog', 'manifest', 'wasm', 'other'].includes(row.owner) ? row.owner : 'unknown';
+      noWorkOwners[owner]++;
+    }
+    else if (!validId(row.workId)) attribution.invalidWorkId++;
+    else if (!sources.has(workKey)) attribution.missingMintStart++;
+    else if (sources.get(workKey) === null) attribution.conflictingSource++;
+    else attribution.attributed++;
     let group = groups.get(source);
     if (!group) { group = { source, total: 0, observedMs: [], censored: 0, capacityRejected: 0, missing: 0 }; groups.set(source, group); }
     group.total++;
@@ -60,7 +73,7 @@ function summarizeQueue(rows) {
     startsWithoutTerminalObserved: [...starts].filter(key => !terminals.has(key)).length,
     terminalsWithoutStartObserved: [...terminals.keys()].filter(key => !starts.has(key)).length,
     observedPools: pools.size, terminalsWithoutPool,
-    duplicateStarts, duplicateTerminals, ambiguousTerminals, conflictingWorkSources, invalidRows
+    duplicateStarts, duplicateTerminals, ambiguousTerminals, conflictingWorkSources, invalidRows, attribution, noWorkOwners
   };
 }
 

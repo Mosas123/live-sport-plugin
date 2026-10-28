@@ -125,3 +125,38 @@ response/body intervals by source. `unavailable` combines stages not reached,
 lost events, ambiguous duplicates and invalid ordering; it is not a count of
 network failures. Percentiles describe observed samples only and must be read
 with unavailable counts. Redirects after the first hop are not summarized.
+
+Local follow-up (not yet in the draft): active diagnostic components emit
+best-effort cumulative snapshots every 30 seconds, in addition to the existing
+close/exit summaries. The timers do not keep the process alive and the pool
+timer stops on close. A short capture can still have no snapshots; stdout or
+forced exit may lose them, and counters cannot prove delivery. The impact of
+periodic console output and actual packaged/PM2 behavior still require isolated
+validation before the campaign. If no valid snapshot of a given kind is seen,
+its loss counters are reported as null rather than zero. Repeated cumulative
+snapshots are grouped per writer (and pool where applicable); even a present
+snapshot does not prove that every writer or the end of capture was observed.
+
+Local follow-up (not yet in the draft): the report also aggregates observed
+`stream_resolution_window_end` events, including windows with unsettled sources
+and observed duration p95. Invalid and duplicate windows are excluded and
+counted. An observed end is not proof of deadline cutoff, and missing starts,
+lost events and missing windows remain unknown. This is not a per-request outcome
+or a complete censoring report; it does not establish completeness.
+The local follow-up now records a fixed reason at the end of the resolution
+wait: all sources settled, early return, priority wait completed, hard-wait
+timer won, or the remaining budget was already exhausted. These describe the
+resolution wait, not HTTP response transmission or cancellation of background
+work. Old records without a reason remain unknown; timers and completion can
+race near a boundary, and unavailable events still cannot be inferred.
+The local queue report additionally counts terminal events with no work ID,
+an invalid work ID, an unmatched mint start, conflicting source labels, and
+a source attribution. These are observed categories, not reasons: traffic
+outside a mint may legitimately lack a work ID, and missing mint starts can
+also reflect loss, incomplete capture or session mismatch. The parser maps
+non-string and overlong work IDs to null before categorization.
+The local candidate tags native terminal events with the existing fixed owner
+labels `catalog`, `manifest`, `wasm` or `other`, and reports these for records
+without a work ID. The labels are not provider identities: callers without an
+explicit tag fall into `other`, including any untagged catalog traffic. Old
+captures do not have this field and remain `unknown` for this breakdown.

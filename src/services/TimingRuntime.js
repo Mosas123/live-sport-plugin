@@ -10,7 +10,8 @@ if (process.env.STREAM_TIMING_EXPERIMENT === 'true') {
     const created = createTimingRelations({ maxEvents: 100000, emit: row => sharedTimingOutput().write('stream_timing', row),
       emitSummary: row => console.info('[StreamTimingSummary]', JSON.stringify({ ...row, ...sharedTimingOutput().identity })) });
     globalThis[key] = created;
-    process.once('exit', () => created.report());
+    const stopSnapshots = require('./TimingSnapshotTimer').startTimingSnapshotTimer(() => created.report());
+    process.once('exit', () => { stopSnapshots(); created.report(); });
   }
   relations = globalThis[key];
 }

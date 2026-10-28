@@ -1310,6 +1310,7 @@ async function handleStream(type, id, config) {
   // while still returning instantly as soon as DaddyLive completes (or when already cached).
   const priority1InFlight = inFlight.filter(f => f.isPriority1 && !f.settled);
   const shouldWait = (streams.length === 0 || priority1InFlight.length > 0) && inFlight.length > 0;
+  let timingWaitOutcome = 'no_wait';
 
   if (shouldWait) {
     const remaining = Math.max(0, HARD_DEADLINE_MS - (Date.now() - resolutionStartedAt));
@@ -1320,12 +1321,13 @@ async function handleStream(type, id, config) {
         ? priority1InFlight.map((f) => f.promise)
         : inFlight.map((f) => f.promise);
 
-      await settleBefore(
+      const waited = await settleBefore(
         Promise.allSettled(waitTargets),
         remaining,
         null
       );
-    }
+      timingWaitOutcome = waited === null ? 'hard_wait_expired' : 'wait_completed';
+    } else timingWaitOutcome = 'budget_exhausted';
     for (const f of inFlight) {
       // Snapshot newly settled resolutions without duplicating
       if (f.settled && Array.isArray(f.value)) {
@@ -1341,7 +1343,10 @@ async function handleStream(type, id, config) {
     console.log(`[streams.js] Early return for ${matchId}: ${lateCount} source(s) still resolving (will be cached)`);
   }
   if (timingStream) {
-    try { timingRelations.endWindow(timingStream, inFlight.length, inFlight.filter(f => !f.settled).length); } catch (_) { /* diagnostic only */ }
+    const unsettled = inFlight.filter(f => !f.settled).length;
+    const reason = timingWaitOutcome === 'hard_wait_expired' || timingWaitOutcome === 'budget_exhausted' ? timingWaitOutcome :
+      unsettled === 0 ? 'all_settled' : timingWaitOutcome === 'wait_completed' ? 'priority_completed' : 'early_return';
+    try { timingRelations.endWindow(timingStream, inFlight.length, unsettled, reason); } catch (_) { /* diagnostic only */ }
   }
   // Withhold per-team 24/7 channels until the fixture is actually in its
   // playable window (see suppressPreMatchTeamChannels). Applied to the assembled

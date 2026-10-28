@@ -1,6 +1,14 @@
 'use strict';
 const { EventEmitter } = require('node:events');
 const { createNativeTiming } = require('../src/services/NativeTiming');
+
+test('terminal owner labels are allowlisted and do not expose caller input', () => {
+  const rows = [], timing = createNativeTiming({ enabled: true, emit: row => rows.push(row) });
+  timing.start('abcd1234', 'catalog').finish();
+  timing.start('abcd1234', 'private-secret').finish();
+  expect(rows.map(row => row.owner)).toEqual(['catalog', 'other']);
+  expect(JSON.stringify(rows)).not.toContain('private-secret');
+});
 const { createIsolatedNativePoolCandidate } = require('../src/services/IsolatedNativePoolCandidate');
 
 test('a deadline emits one terminal row and a later child-exit row', async () => {

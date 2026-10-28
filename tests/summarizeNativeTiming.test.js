@@ -2,6 +2,18 @@
 const { Readable } = require('node:stream');
 const { decodeLine, summarizeStream } = require('../scripts/summarize-native-timing');
 
+test('reports observed stream windows without treating missing or duplicated events as complete', async () => {
+  const base = { kind: 'stream_timing', type: 'stream_resolution_window_end', pid: 7,
+    sessionId: 'a'.repeat(32), streamId: 'b'.repeat(32), durationMs: 15000, sourceCount: 5, unsettledCount: 2 };
+  const other = { ...base, streamId: 'c'.repeat(32), durationMs: 100, unsettledCount: 0 };
+  const invalid = { ...base, streamId: 'd'.repeat(32), unsettledCount: 6 };
+  const report = await summarizeStream(Readable.from([[base, other, other, invalid].map(JSON.stringify).join('\n')]));
+  expect(report.streamWindows).toEqual({ observed: 1, withUnsettledSources: 1, unsettledSources: 2,
+    reasons: { all_settled: 0, early_return: 0, priority_completed: 0, hard_wait_expired: 0, budget_exhausted: 0, unknown: 1 },
+    p95ObservedDurationMs: 15000, invalid: 1, duplicate: 1, ambiguous: 1 });
+  expect(report.completeness).toBe('unknown');
+});
+
 test('reports loss snapshots without adding overlapping counters or claiming completeness', async () => {
   const id = 'a'.repeat(16);
   const sessionId = 'b'.repeat(32);
@@ -16,7 +28,7 @@ test('reports loss snapshots without adding overlapping counters or claiming com
   const result = await summarizeStream(Readable.from([lines.join('\n')]));
   expect(result).toMatchObject({ timingRecords: 2, truncated: false, ignoredLines: 2,
     snapshots: { native: 1, stream: 0, output: 1 },
-    losses: { nativeDropped: 2, streamDropped: 0, outputRejected: 2, outputFailed: 1 }, completeness: 'unknown' });
+    losses: { nativeDropped: 2, streamDropped: null, outputRejected: 2, outputFailed: 1 }, completeness: 'unknown' });
   expect(result.queue.groups[0]).toMatchObject({ total: 1, observed: 0, censored: 1, p95ObservedMs: null });
   expect(JSON.stringify(result)).not.toMatch(/private/);
 });
@@ -51,6 +63,7 @@ test('invalid snapshots are not silently counted as zero loss', async () => {
   const result = await summarizeStream(Readable.from([input.join('\n')]));
   expect(result.invalidSnapshots).toBe(2);
   expect(result.snapshots).toEqual({ native: 0, stream: 0, output: 0 });
+  expect(result.losses).toEqual({ nativeDropped: null, streamDropped: null, outputRejected: null, outputFailed: null });
   expect(result.completeness).toBe('unknown');
 });
 
