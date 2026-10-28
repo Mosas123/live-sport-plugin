@@ -1,6 +1,7 @@
 'use strict';
 const { EventEmitter } = require('node:events');
-const { createIsolatedNativePoolCandidate } = require('../src/services/IsolatedNativePoolCandidate');
+const { createIsolatedNativePoolCandidate: createPool } = require('../src/services/IsolatedNativePoolCandidate');
+const createIsolatedNativePoolCandidate = options => createPool({ admissionWaitMs: 0, ...options });
 const { createSharedOutboundFetch } = require('../src/services/SharedOutboundFetch');
 
 function fakeChild() {
@@ -161,4 +162,78 @@ test('DamitTV proxy egress survives the shared policy and a 403 never falls back
   expect((await pending).status).toBe(403);
   expect(fallbackFetch).not.toHaveBeenCalled();
   child.emit('exit', 0); await pool.close();
+});
+
+test('queued proxy work is admitted before direct work when a child exits', async () => {
+  const children = [], pool = createPool({ maxSlots: 1, admissionWaitMs: 500, maxWaiters: 4,
+    spawn: () => { const child = fakeChild(); children.push(child); return child; } });
+  const first = pool.fetch('https://first.example.org/');
+  const direct = pool.fetch('https://direct.example.org/');
+  const proxy = pool.fetch('https://damitv.st/', { profile: 'vanilla', proxyUrl: 'socks5://127.0.0.1:40000' });
+  expect(children).toHaveLength(1);
+  children[0].emit('message', { type: 'result', status: 200, url: 'https://first.example.org/', headers: [], bytes: Buffer.from('1') });
+  await first; children[0].emit('exit', 0); await Promise.resolve();
+  expect(children).toHaveLength(2);
+  expect(children[1].send.mock.calls[0][0]).toMatchObject({ url: 'https://damitv.st/', options: { proxyUrl: 'socks5://127.0.0.1:40000' } });
+  children[1].emit('message', { type: 'result', status: 200, url: 'https://damitv.st/', headers: [], bytes: Buffer.from('2') });
+  await proxy; children[1].emit('exit', 0); await Promise.resolve();
+  expect(children).toHaveLength(3);
+  expect(children[2].send.mock.calls[0][0].url).toBe('https://direct.example.org/');
+  children[2].emit('message', { type: 'result', status: 200, url: 'https://direct.example.org/', headers: [], bytes: Buffer.from('3') });
+  await direct; children[2].emit('exit', 0); await pool.close();
+});
+
+test('queued cancellation never spawns a child and frees queue space', async () => {
+  const children = [], pool = createPool({ maxSlots: 1, admissionWaitMs: 500, maxWaiters: 2,
+    spawn: () => { const child = fakeChild(); children.push(child); return child; } });
+  const first = pool.fetch('https://first.example.org/'), controller = new AbortController();
+  const queued = pool.fetch('https://second.example.org/', { signal: controller.signal });
+  controller.abort(new Error('viewer left'));
+  await expect(queued).rejects.toThrow('viewer left');
+  expect(children).toHaveLength(1);
+  children[0].emit('message', { type: 'result', status: 200, url: 'https://first.example.org/', headers: [], bytes: Buffer.from('1') });
+  await first; children[0].emit('exit', 0); await Promise.resolve();
+  expect(children).toHaveLength(1); await pool.close();
+});
+
+test('admission wait is bounded and counts toward the request deadline', async () => {
+  const child = fakeChild(), pool = createPool({ maxSlots: 1, admissionWaitMs: 30, spawn: () => child });
+  const first = pool.fetch('https://first.example.org/');
+  await expect(pool.fetch('https://second.example.org/', { timeoutMs: 200 })).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_BUSY' });
+  await expect(pool.fetch('https://second.example.org/', { timeoutMs: 10 })).rejects.toMatchObject({ name: 'TimeoutError' });
+  child.emit('message', { type: 'result', status: 200, url: 'https://first.example.org/', headers: [], bytes: Buffer.from('1') });
+  await first; child.emit('exit', 0); await pool.close();
+});
+
+test('shutdown rejects queued requests while still waiting for child exit', async () => {
+  const child = fakeChild(), pool = createPool({ maxSlots: 1, admissionWaitMs: 500, spawn: () => child });
+  const first = pool.fetch('https://first.example.org/').catch(error => error);
+  const queued = pool.fetch('https://second.example.org/');
+  const closing = pool.close();
+  await expect(queued).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_CLOSED' });
+  child.emit('exit', 1); await first; await closing;
+});
+
+test('bounded direct queue leaves room for proxy admission', async () => {
+  const child = fakeChild(), pool = createPool({ maxSlots: 1, admissionWaitMs: 500, maxWaiters: 4, spawn: () => child });
+  const first = pool.fetch('https://first.example.org/').catch(error => error);
+  const direct = Array.from({ length: 3 }, () => pool.fetch('https://direct.example.org/').catch(error => error));
+  await expect(pool.fetch('https://overflow.example.org/')).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_BUSY' });
+  const proxy = pool.fetch('https://damitv.st/', { proxyUrl: 'socks5://127.0.0.1:40000' }).catch(error => error);
+  await expect(pool.fetch('https://overflow.example.org/', { proxyUrl: 'socks5://127.0.0.1:40000' })).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_BUSY' });
+  const closing = pool.close(); child.emit('exit', 1);
+  await Promise.all([first, ...direct, proxy]); await closing;
+});
+
+test('child receives the remaining deadline after admission waiting', async () => {
+  const children = [], pool = createPool({ maxSlots: 1, admissionWaitMs: 500,
+    spawn: () => { const child = fakeChild(); children.push(child); return child; } });
+  const first = pool.fetch('https://first.example.org/');
+  const queued = pool.fetch('https://second.example.org/', { timeoutMs: 500 });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  children[0].emit('message', { type: 'result', status: 200, url: 'https://first.example.org/', headers: [], bytes: Buffer.from('ok') });
+  await first; children[0].emit('exit', 0); await Promise.resolve();
+  expect(children[1].send.mock.calls[0][0].options.timeoutMs).toBeLessThan(500);
+  children[1].emit('message', { type: 'result', status: 200, url: 'https://second.example.org/', headers: [], bytes: Buffer.from('ok') });
+  await queued; children[1].emit('exit', 0); await pool.close();
 });

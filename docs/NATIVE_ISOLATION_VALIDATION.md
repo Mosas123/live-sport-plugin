@@ -12,6 +12,14 @@ capacity is returned only when child exit or close is observed. A child that
 does not exit remains counted. This deliberately avoids exceeding the cap,
 but cannot promise recovery if the OS never confirms the child has ended.
 
+When the pool is full, the candidate queues up to 128 requests for at most
+five seconds, within each request's original deadline. A small portion of
+queue capacity is reserved for proxied requests, and waiting proxy requests
+are admitted first when a child exits. A saturated queue or sustained load
+can still cause capacity errors; repeated proxy traffic can delay direct work.
+Local capacity failures do not count as DamiTV circuit-breaker failures, so a
+subsequent sync can try the provider again.
+
 Before requesting real-event validation, review the candidate and its build
 packaging, then arrange controlled checks in an isolated environment:
 
@@ -19,7 +27,11 @@ packaging, then arrange controlled checks in an isolated environment:
   script and its guarded dependencies are present and load from the bundle.
 - Confirm a hung native request is terminated at its deadline, the child exit
   is observed, and a later request can use the recovered slot. Repeat with four
-  hung requests; ensure a fifth is rejected until an exit is observed.
+  hung requests; ensure a fifth cannot start until an exit is observed and
+  that its wait respects the admission and request deadlines.
+- Exercise the startup sync with more work than there are slots. Check queue
+  waits and capacity errors, whether DamiTV is admitted via WARP, and whether
+  direct providers also make progress. Sustained traffic can exhaust the queue.
 - Verify blocked targets and redirects stay blocked, including at connection
   time, and that errors do not expose URLs, tokens or proxy credentials.
 - Verify DamitTV uses the configured WARP SOCKS proxy, including redirects,

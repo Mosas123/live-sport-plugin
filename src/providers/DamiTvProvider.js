@@ -16,6 +16,9 @@ const ROLLING_WINDOW_TOLERANCE_S = 90;
 // item shape (title instead of name, date in ms instead of starts_at in s).
 const MATCHES_ALL_URL = 'https://damitv.st/papi/matches/all';
 const EXTRACT_URL_BASE = 'https://damitv.st/papi/extract-url/';
+// Local pool saturation says nothing about provider health. Do not let it
+// count as a DamiTV failure or prevent a later sync from trying again.
+const localCapacityFilter = error => error?.code === 'ERR_OUTBOUND_CAPACITY';
 
 const DAMITV_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
@@ -34,7 +37,7 @@ class DamiTvProvider extends BaseProvider {
       const res = await this.proxyFetch(this.apiUrl, { headers: DAMITV_HEADERS, signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
-    });
+    }, { errorFilter: localCapacityFilter });
 
     // Secondary feed for the 24/7 channels. Non-fatal: a failure here only
     // costs the 24/7 row, not the fixture schedule.
@@ -42,7 +45,7 @@ class DamiTvProvider extends BaseProvider {
       const res = await this.proxyFetch(MATCHES_ALL_URL, { headers: DAMITV_HEADERS, signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
-    });
+    }, { errorFilter: localCapacityFilter });
   }
 
   /**
