@@ -191,7 +191,10 @@ async function guardedRequest(rawUrl, options = {}) {
           response.body.once('error', releaseProxy);
           retained = true;
         }
-        return { ...response, url };
+        // Undici can attach enumerable symbol metadata to the headers object.
+        // Fetch Headers accepts only string names; keep actual headers without
+        // passing implementation metadata into the WebIDL conversion.
+        return { ...response, headers: Object.fromEntries(Object.entries(response.headers)), url };
       }
       discard(response.body);
       if (hop >= 5) throw Object.assign(new Error('Outbound redirect limit exceeded'), { code: 'ERR_OUTBOUND_REDIRECT_LIMIT' });

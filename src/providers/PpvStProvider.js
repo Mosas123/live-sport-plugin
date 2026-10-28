@@ -23,7 +23,8 @@ class PpvStProvider extends BaseProvider {
           'Referer': 'https://ppv.st/',
           'Origin': 'https://ppv.st'
         },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(10000),
+        diagnosticOwner: 'catalog'
       });
       if (!res.ok) return matches;
       const data = typeof res.json === 'function' ? await res.json() : JSON.parse(res.text);

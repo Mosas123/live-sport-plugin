@@ -31,19 +31,20 @@ function createIsolatedNativePoolCandidate({ maxSlots = 4, admissionWaitMs = 500
   };
   const drain = () => {
     while (!closed && admitted < maxSlots && waiters.length) {
-      const proxyIndex = waiters.findIndex(waiter => waiter.proxy);
-      const waiter = waiters.splice(proxyIndex < 0 ? 0 : proxyIndex, 1)[0];
+      const proxyIndex = waiters.findIndex(waiter => waiter.priority === 2);
+      const catalogIndex = proxyIndex < 0 ? waiters.findIndex(waiter => waiter.priority === 1) : -1;
+      const waiter = waiters.splice(proxyIndex >= 0 ? proxyIndex : catalogIndex >= 0 ? catalogIndex : 0, 1)[0];
       waiter.cleanup(); admitted++; waiter.resolve();
     }
   };
   const release = () => { admitted--; drain(); };
-  function admit(signal, timeoutMs, proxy) {
+  function admit(signal, timeoutMs, priority) {
     if (!waiters.length && admitted < maxSlots) { admitted++; return null; }
     const proxyReserve = Math.min(8, Math.floor(maxWaiters / 4));
-    if (admissionWaitMs === 0 || waiters.length >= maxWaiters || (!proxy && waiters.filter(w => !w.proxy).length >= maxWaiters - proxyReserve)) return Promise.reject(capacityError());
+    if (admissionWaitMs === 0 || waiters.length >= maxWaiters || (priority === 0 && waiters.filter(w => w.priority === 0).length >= maxWaiters - proxyReserve)) return Promise.reject(capacityError());
     return new Promise((resolve, reject) => {
       let timer;
-      const waiter = { proxy, resolve, reject, cleanup: () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); } };
+      const waiter = { priority, resolve, reject, cleanup: () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); } };
       const fail = failure => { const index = waiters.indexOf(waiter); if (index < 0) return; waiters.splice(index, 1); waiter.cleanup(); reject(failure); };
       const onAbort = () => fail(signal.reason);
       waiters.push(waiter);
@@ -61,7 +62,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = 4, admissionWaitMs = 500
       if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30000) throw new RangeError('Invalid native deadline');
       signal?.throwIfAborted();
       const startedAt = performance.now();
-      const admission = admit(signal, timeoutMs, !!options.proxyUrl);
+      const admission = admit(signal, timeoutMs, options.proxyUrl ? 2 : options.diagnosticOwner === 'catalog' ? 1 : 0);
       if (admission) await admission;
       if (closed || signal?.aborted) { release(); if (signal?.aborted) throw signal.reason; throw error('ERR_NATIVE_POOL_CLOSED', 'Native pool closed'); }
       if (performance.now() - startedAt >= timeoutMs) { release(); throw new DOMException('Native fetch deadline', 'TimeoutError'); }
@@ -72,7 +73,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = 4, admissionWaitMs = 500
       const record = { slotId: nextSlotId++, startedAt: now(), phase: 'running',
         profile: ['chrome', 'vanilla'].includes(options.profile) ? options.profile : 'default',
         egress: options.proxyUrl ? 'proxy' : 'direct',
-        owner: ['manifest', 'wasm'].includes(options.diagnosticOwner) ? options.diagnosticOwner : 'other' };
+        owner: ['manifest', 'wasm', 'catalog'].includes(options.diagnosticOwner) ? options.diagnosticOwner : 'other' };
       children.set(child, record);
       return new Promise((resolve, reject) => {
         let settled = false;

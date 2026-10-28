@@ -14,9 +14,10 @@ but cannot promise recovery if the OS never confirms the child has ended.
 
 When the pool is full, the candidate queues up to 128 requests for at most
 five seconds, within each request's original deadline. A small portion of
-queue capacity is reserved for proxied requests, and waiting proxy requests
-are admitted first when a child exits. A saturated queue or sustained load
-can still cause capacity errors; repeated proxy traffic can delay direct work.
+queue capacity is reserved for proxied and tagged catalog requests. Waiting
+proxy requests are admitted first, followed by tagged catalog requests, when a
+child exits. A saturated queue or sustained load can still cause capacity
+errors; repeated higher-priority traffic can delay other work.
 Local capacity failures do not count as DamiTV circuit-breaker failures, so a
 subsequent sync can try the provider again.
 

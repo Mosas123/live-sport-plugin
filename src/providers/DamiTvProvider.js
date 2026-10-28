@@ -312,6 +312,7 @@ class DamiTvProvider extends BaseProvider {
       if (!matchId) return streams;
 
       let extractData = null;
+      let extractPhase = 'fetch';
       try {
         const extractRes = await this.proxyFetch(`${EXTRACT_URL_BASE}${encodeURIComponent(matchId)}`, {
           headers: {
@@ -322,10 +323,15 @@ class DamiTvProvider extends BaseProvider {
         });
 
         if (extractRes.ok) {
+          extractPhase = 'parse';
           extractData = await extractRes.json();
+        } else {
+          console.warn(`[${this.name}] API extraction returned a non-success response`, JSON.stringify({ status: extractRes.status }));
         }
       } catch (extractErr) {
-        console.warn(`[${this.name}] API extraction failed for ${matchId}, falling back to embed chain...`);
+        const kind = ['SyntaxError', 'TimeoutError', 'AbortError', 'TypeError'].includes(extractErr?.name) ? extractErr.name : 'Error';
+        const code = typeof extractErr?.code === 'string' && /^(ERR_[A-Z0-9_]{1,64}|ETIMEDOUT|ECONNRESET|ABORT_ERR)$/.test(extractErr.code) ? extractErr.code : undefined;
+        console.warn(`[${this.name}] API extraction failed`, JSON.stringify({ phase: extractPhase, kind, ...(code ? { code } : {}) }));
       }
 
       const UA_CHROME131 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';

@@ -38,6 +38,14 @@ describe('guarded external redirect transport', () => {
     expect(request.mock.calls[1][1].maxRedirections).toBe(0);
   });
 
+  test('response header symbols from Undici do not break Fetch Headers conversion', async () => {
+    const headers = { 'content-type': 'text/plain', [Symbol('undici metadata')]: Symbol('internal') };
+    request.mockResolvedValueOnce({ statusCode: 200, headers, body: body('fixture') });
+    const response = await guardedFetch('https://cdn.example.org/');
+    expect(response.headers.get('content-type')).toBe('text/plain');
+    expect(await response.text()).toBe('fixture');
+  });
+
   test('manual redirects return the Location without contacting or approving a second destination', async () => {
     request.mockResolvedValueOnce({ statusCode: 302, headers: { location: 'http://127.0.0.1/private' }, body: body('redirect') });
     const response = await guardedFetch('https://cdn.example.org/', { redirect: 'manual' });

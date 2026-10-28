@@ -183,6 +183,21 @@ test('queued proxy work is admitted before direct work when a child exits', asyn
   await direct; children[2].emit('exit', 0); await pool.close();
 });
 
+test('queued catalog work is admitted ahead of ordinary direct work', async () => {
+  const children = [], pool = createPool({ maxSlots: 1, admissionWaitMs: 500,
+    spawn: () => { const child = fakeChild(); children.push(child); return child; } });
+  const first = pool.fetch('https://first.example.org/');
+  const direct = pool.fetch('https://ordinary.example.org/');
+  const catalog = pool.fetch('https://api.ppv.st/', { diagnosticOwner: 'catalog' });
+  children[0].emit('message', { type: 'result', status: 200, url: 'https://first.example.org/', headers: [], bytes: Buffer.from('ok') });
+  await first; children[0].emit('exit', 0); await Promise.resolve();
+  expect(children[1].send.mock.calls[0][0]).toMatchObject({ url: 'https://api.ppv.st/', options: { diagnosticOwner: 'catalog' } });
+  children[1].emit('message', { type: 'result', status: 200, url: 'https://api.ppv.st/', headers: [], bytes: Buffer.from('ok') });
+  await catalog; children[1].emit('exit', 0); await Promise.resolve();
+  children[2].emit('message', { type: 'result', status: 200, url: 'https://ordinary.example.org/', headers: [], bytes: Buffer.from('ok') });
+  await direct; children[2].emit('exit', 0); await pool.close();
+});
+
 test('queued cancellation never spawns a child and frees queue space', async () => {
   const children = [], pool = createPool({ maxSlots: 1, admissionWaitMs: 500, maxWaiters: 2,
     spawn: () => { const child = fakeChild(); children.push(child); return child; } });
