@@ -31,6 +31,18 @@ test('child exits when its supervisor IPC disconnects', () => {
   expect(child.createNativeGuardedFetch).not.toHaveBeenCalled();
 });
 
+test('watchdog requests termination when the supervisor disappears', () => {
+  let poll, lifetime;
+  const kill = jest.fn((pid, signal) => { if (pid === 123 && signal === 0) throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+  const processStub = { ppid: 123, pid: 456, kill, once: jest.fn(), exit: jest.fn() };
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/isolated-native-child.cjs'), 'utf8');
+  vm.runInNewContext(source, { process: processStub, Buffer, TypeError, RangeError,
+    setInterval: fn => { poll = fn; return { unref() {} }; }, setTimeout: fn => { lifetime = fn; return { unref() {} }; },
+    require: () => ({ createNativeGuardedFetch: jest.fn() }) });
+  poll(); expect(kill).toHaveBeenCalledWith(456, 'SIGKILL');
+  kill.mockClear(); lifetime(); expect(kill).toHaveBeenCalledWith(456, 'SIGKILL');
+});
+
 test('child serializes error policy without transmitting exception details', async () => {
   const failure = Object.assign(new TypeError('secret credential or URL'), { code: 'ERR_OUTBOUND_BLOCKED', isFatal: true });
   const child = loadChild(async () => { throw failure; });

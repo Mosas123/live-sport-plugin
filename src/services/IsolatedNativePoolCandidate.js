@@ -8,6 +8,21 @@ const { threadId } = require('node:worker_threads');
 const path = require('node:path');
 const fs = require('node:fs');
 const error = (code, message) => Object.assign(new Error(message), { code });
+const trackedChildren = new Set();
+let exitHookInstalled = false;
+function killTrackedChildren() {
+  for (const child of trackedChildren) { try { child.kill('SIGKILL'); } catch (_) {} }
+}
+function trackChild(child) {
+  trackedChildren.add(child);
+  const remove = () => trackedChildren.delete(child);
+  child.once('exit', remove); child.once('close', remove);
+  if (!exitHookInstalled) { exitHookInstalled = true; process.once('exit', killTrackedChildren); }
+}
+function configuredSlots(raw = process.env.GUARDED_NATIVE_MAX_SLOTS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1 && value <= 8 ? value : 4;
+}
 
 function childScriptPath(base = __dirname, exists = fs.existsSync) {
   const local = path.join(base, 'isolated-native-child.cjs');
@@ -15,10 +30,10 @@ function childScriptPath(base = __dirname, exists = fs.existsSync) {
   return exists(local) ? local : bundled;
 }
 
-function createIsolatedNativePoolCandidate({ maxSlots = 4, admissionWaitMs = 5000, maxWaiters = 128, now = () => performance.now(), spawn = () => fork(
+function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admissionWaitMs = 5000, maxWaiters = 128, now = () => performance.now(), spawn = () => fork(
   childScriptPath(), [],
   { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'advanced' }) } = {}) {
-  if (!Number.isInteger(maxSlots) || maxSlots < 1 || maxSlots > 4) throw new RangeError('Invalid native pool size');
+  if (!Number.isInteger(maxSlots) || maxSlots < 1 || maxSlots > 8) throw new RangeError('Invalid native pool size');
   if (!Number.isFinite(admissionWaitMs) || admissionWaitMs < 0 || admissionWaitMs > 30000 || !Number.isInteger(maxWaiters) || maxWaiters < 1 || maxWaiters > 512) throw new RangeError('Invalid native admission limits');
   const children = new Map(), waiters = [], poolId = randomBytes(4).toString('hex');
   let closed = false, closing, nextSlotId = 1, admitted = 0;
@@ -75,6 +90,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = 4, admissionWaitMs = 500
         egress: options.proxyUrl ? 'proxy' : 'direct',
         owner: ['manifest', 'wasm', 'catalog'].includes(options.diagnosticOwner) ? options.diagnosticOwner : 'other' };
       children.set(child, record);
+      trackChild(child);
       return new Promise((resolve, reject) => {
         let settled = false;
         const finish = (failure, response) => {
@@ -144,4 +160,4 @@ function createIsolatedNativePoolCandidate({ maxSlots = 4, admissionWaitMs = 500
   };
 }
 
-module.exports = { createIsolatedNativePoolCandidate, childScriptPath };
+module.exports = { createIsolatedNativePoolCandidate, childScriptPath, configuredSlots, killTrackedChildren };

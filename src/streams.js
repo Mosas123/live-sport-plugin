@@ -200,8 +200,17 @@ async function dispatchToProvider(sourceName, src, match) {
     const provider = container.resolve('timStreamsProvider');
     resStreams = await provider.resolveStream(src.id, match.category, match.title);
   } else if (sourceName === 'damitv') {
-    const provider = container.resolve('damiTvProvider');
-    resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+    const startedAt = Date.now();
+    console.info('[DamiTV] Dispatch started');
+    try {
+      const provider = container.resolve('damiTvProvider');
+      resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
+      console.info('[DamiTV] Dispatch finished', JSON.stringify({ ms: Date.now() - startedAt, streams: Array.isArray(resStreams) ? resStreams.length : 0 }));
+    } catch (failure) {
+      const kind = ['TimeoutError', 'AbortError', 'TypeError', 'SyntaxError'].includes(failure?.name) ? failure.name : 'Error';
+      console.warn('[DamiTV] Dispatch failed', JSON.stringify({ ms: Date.now() - startedAt, kind }));
+      throw failure;
+    }
   } else if (sourceName === 'watchfooty') {
     const provider = container.resolve('watchFootyProvider');
     resStreams = await provider.resolveStream(src.id, match.category, match.title);

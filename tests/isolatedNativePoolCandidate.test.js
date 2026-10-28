@@ -1,6 +1,7 @@
 'use strict';
 const { EventEmitter } = require('node:events');
 const { createIsolatedNativePoolCandidate: createPool } = require('../src/services/IsolatedNativePoolCandidate');
+const { configuredSlots, killTrackedChildren } = require('../src/services/IsolatedNativePoolCandidate');
 const createIsolatedNativePoolCandidate = options => createPool({ admissionWaitMs: 0, ...options });
 const { createSharedOutboundFetch } = require('../src/services/SharedOutboundFetch');
 
@@ -10,6 +11,18 @@ function fakeChild() {
   child.kill = jest.fn();
   return child;
 }
+
+test('slot configuration defaults to four and accepts at most eight', () => {
+  expect(configuredSlots('6')).toBe(6); expect(configuredSlots('9')).toBe(4);
+  expect(configuredSlots('')).toBe(4); expect(() => createPool({ maxSlots: 9 })).toThrow(RangeError);
+});
+
+test('exit cleanup requests termination of tracked children', async () => {
+  const child = fakeChild(), pool = createPool({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://cdn.example.org/').catch(error => error);
+  killTrackedChildren(); expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  child.emit('exit', 1); await pending; await pool.close();
+});
 
 test('timeout kills the child and holds capacity until exit is observed', async () => {
   const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });

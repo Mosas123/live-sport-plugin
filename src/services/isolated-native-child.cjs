@@ -5,6 +5,16 @@ const { createNativeGuardedFetch } = require('./NativeGuardedFetch');
 let started = false;
 // If the supervisor dies, do not leave a native request orphaned.
 process.once('disconnect', () => process.exit(1));
+// Best effort only: these timers require the child's event loop to run.
+if (typeof setInterval === 'function' && typeof setTimeout === 'function') {
+  const parent = process.ppid;
+  const stop = () => { try { process.kill(process.pid, 'SIGKILL'); } catch (_) { process.exit(1); } };
+  setInterval(() => {
+    if (process.ppid !== parent) return stop();
+    try { process.kill(parent, 0); } catch (failure) { if (failure?.code !== 'EPERM') stop(); }
+  }, 2000).unref();
+  setTimeout(stop, 40000).unref();
+}
 process.once('message', async message => {
   if (started) return;
   started = true;

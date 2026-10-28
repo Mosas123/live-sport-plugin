@@ -7,10 +7,13 @@ existing guarded native transport remains selected. Do not interpret passing
 mocked tests as confirmation that the production problem is fixed.
 
 The candidate starts a child per native request and caps tracked children at
-four per pool. On completion or cancellation, it requests child termination;
+four per pool by default; `GUARDED_NATIVE_MAX_SLOTS` may select 1–8 per pool.
+On completion or cancellation, it requests child termination;
 capacity is returned only when child exit or close is observed. A child that
 does not exit remains counted. This deliberately avoids exceeding the cap,
 but cannot promise recovery if the OS never confirms the child has ended.
+An exit hook and child watchdog provide best-effort cleanup; neither replaces
+real shutdown testing, particularly if the child's event loop is blocked.
 
 When the pool is full, the candidate queues up to 128 requests for at most
 five seconds, within each request's original deadline. A small portion of

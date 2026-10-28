@@ -196,6 +196,8 @@ class DaddyLiveProvider extends BaseProvider {
           if (homeRes && homeRes.bodyTruncated) throw new Error('DaddyLive schedule exceeds its 8 MiB limit');
           if (homeRes && homeRes.ok) {
             const homeHtml = typeof homeRes.text === 'function' ? await homeRes.text() : homeRes.text;
+            const sizeBytes = typeof homeHtml === 'string' ? Buffer.byteLength(homeHtml, 'utf8') : 0;
+            if (sizeBytes > 5 * 1024 * 1024) console.warn(`[${this.name}] Schedule exceeds 5 MiB`, JSON.stringify({ sizeBytes }));
             const parsed = this.parseScheduleHtml(homeHtml);
             if (parsed) return parsed;
           }
