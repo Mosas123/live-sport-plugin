@@ -22,3 +22,13 @@ test.each([
     expect(log).not.toContain('secret');
   } finally { warn.mockRestore(); }
 });
+
+test('DamiTV extraction has an explicit bounded WARP-compatible deadline', async () => {
+  const breaker = { wrapSync: (_name, fn) => ({ fire: fn }) };
+  const provider = new DamiTvProvider({ circuitBreaker: breaker });
+  provider.proxyFetch = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, hlsUrl: 'https://cdn.example.org/master.m3u8' }) });
+  const result = await provider.resolveStream('https://damitv.st/embed/?id=fixture', 'basketball', 'Fixture');
+  expect(result.length).toBeGreaterThan(0);
+  expect(provider.proxyFetch.mock.calls[0][1]).toMatchObject({ timeoutMs: 11000 });
+  expect(provider.proxyFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+});

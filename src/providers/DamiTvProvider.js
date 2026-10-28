@@ -319,7 +319,8 @@ class DamiTvProvider extends BaseProvider {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'Referer': embedUrl
           },
-          signal: AbortSignal.timeout(8000)
+          timeoutMs: 11000,
+          signal: AbortSignal.timeout(11000)
         });
 
         if (extractRes.ok) {

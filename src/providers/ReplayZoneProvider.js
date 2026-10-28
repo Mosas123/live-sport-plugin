@@ -26,9 +26,11 @@ class ReplayZoneProvider {
 
     async getMatches() {
         try {
-            const { body } = await undici.request(this.replaysUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0' }
+            const { body, bodyTruncated } = await undici.request(this.replaysUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                maxBodyBytes: 8 * 1024 * 1024
             });
+            if (bodyTruncated) throw new Error('Replay index exceeds its 8 MiB limit');
             const text = await body.text();
             
             const matches = [];

@@ -189,6 +189,7 @@ class DaddyLiveProvider extends BaseProvider {
             },
             signal: AbortSignal.timeout(homeBudgetMs),
             timeoutMs: homeBudgetMs,
+            diagnosticOwner: 'catalog',
             attempts: 1
           });
           if (homeRes && homeRes.ok) {
@@ -217,6 +218,7 @@ class DaddyLiveProvider extends BaseProvider {
             },
             signal: AbortSignal.timeout(budgetMs),
             timeoutMs: budgetMs,
+            diagnosticOwner: 'catalog',
             attempts: 1
           });
           if (res.ok) {
