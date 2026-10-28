@@ -12,6 +12,9 @@ test('build copy manifest includes both supervisor and child alongside guarded d
   expect(copies).toContainEqual(['src/services/IsolatedNativePoolCandidate.js', 'output/services/IsolatedNativePoolCandidate.js']);
   expect(copies).toContainEqual(['src/services/isolated-native-child.cjs', 'output/services/isolated-native-child.cjs']);
   expect(copies).toContainEqual(['src/services/NativeGuardedFetch.js', 'output/services/NativeGuardedFetch.js']);
+  expect(copies).toContainEqual(['src/services/NativeTiming.js', 'output/services/NativeTiming.js']);
+  expect(copies).toContainEqual(['src/services/TimingContext.js', 'output/services/TimingContext.js']);
+  expect(copies).toContainEqual(['src/services/TimingOutput.js', 'output/services/TimingOutput.js']);
   expect(copies).toContainEqual(['src/impitClient.js', 'output/impitClient.js']);
 });
 

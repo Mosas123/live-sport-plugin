@@ -7,6 +7,7 @@ const { randomBytes } = require('node:crypto');
 const { threadId } = require('node:worker_threads');
 const path = require('node:path');
 const fs = require('node:fs');
+const { createNativeTiming } = require('./NativeTiming');
 const error = (code, message) => Object.assign(new Error(message), { code });
 const trackedChildren = new Set();
 let exitHookInstalled = false;
@@ -30,7 +31,7 @@ function childScriptPath(base = __dirname, exists = fs.existsSync) {
   return exists(local) ? local : bundled;
 }
 
-function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admissionWaitMs = 5000, maxWaiters = 128, now = () => performance.now(), spawn = () => fork(
+function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admissionWaitMs = 5000, maxWaiters = 128, now = () => performance.now(), timing = createNativeTiming({ enabled: process.env.NATIVE_TIMING_DIAGNOSTICS === 'true', emitStarts: true }), spawn = () => fork(
   childScriptPath(), [],
   { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'advanced' }) } = {}) {
   if (!Number.isInteger(maxSlots) || maxSlots < 1 || maxSlots > 8) throw new RangeError('Invalid native pool size');
@@ -69,28 +70,41 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
       drain();
     });
   }
-  return {
+  const pool = {
     get occupied() { return children.size; },
+    get timingStats() { return timing.stats; },
     async fetch(url, options = {}) {
+      const trace = timing.start(poolId);
+      try {
+        const result = await pool.fetchWithTrace(url, options, trace);
+        trace.finish(); return result;
+      } catch (failure) { trace.finish(failure); throw failure; }
+    },
+    async fetchWithTrace(url, options, trace) {
       if (closed) throw error('ERR_NATIVE_POOL_CLOSED', 'Native pool closed');
       const { signal, timeoutMs = 15000 } = options;
       if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30000) throw new RangeError('Invalid native deadline');
       signal?.throwIfAborted();
       const startedAt = performance.now();
+      trace.enqueued();
       const admission = admit(signal, timeoutMs, options.proxyUrl ? 2 : options.diagnosticOwner === 'catalog' ? 1 : 0);
       if (admission) await admission;
+      trace.admitted();
       if (closed || signal?.aborted) { release(); if (signal?.aborted) throw signal.reason; throw error('ERR_NATIVE_POOL_CLOSED', 'Native pool closed'); }
       if (performance.now() - startedAt >= timeoutMs) { release(); throw new DOMException('Native fetch deadline', 'TimeoutError'); }
       const remaining = Math.max(1, Math.ceil(timeoutMs - (performance.now() - startedAt)));
       let child;
+      trace.spawnAttempt();
       try { child = spawn(); }
       catch (_) { release(); throw error('ERR_NATIVE_UNAVAILABLE', 'Native child unavailable'); }
+      trace.spawned();
       const record = { slotId: nextSlotId++, startedAt: now(), phase: 'running',
         profile: ['chrome', 'vanilla'].includes(options.profile) ? options.profile : 'default',
         egress: options.proxyUrl ? 'proxy' : 'direct',
         owner: ['manifest', 'wasm', 'catalog'].includes(options.diagnosticOwner) ? options.diagnosticOwner : 'other' };
       children.set(child, record);
       trackChild(child);
+      if (timing.enabled) child.once('spawn', () => trace.spawnObserved());
       return new Promise((resolve, reject) => {
         let settled = false;
         const finish = (failure, response) => {
@@ -99,6 +113,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
           record.phase = 'terminating';
           clearTimeout(timer);
           signal?.removeEventListener('abort', aborted);
+          child.removeListener('message', onMessage);
           try { child.kill('SIGKILL'); } catch (_) { /* retain capacity until exit */ }
           if (failure) reject(failure); else resolve(response);
         };
@@ -106,14 +121,23 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
         const timer = setTimeout(() => finish(new DOMException('Native fetch deadline', 'TimeoutError')), remaining);
         signal?.addEventListener('abort', aborted, { once: true });
         const exited = () => {
-          if (children.delete(child)) release();
+          if (children.delete(child)) { trace.exited(); release(); }
           finish(error('ERR_NATIVE_CHILD_EXIT', 'Native child exited before response'));
         };
         child.once('exit', exited);
         child.once('close', exited);
         child.once('error', () => finish(error(child.pid ? 'ERR_NATIVE_CHILD' : 'ERR_NATIVE_UNAVAILABLE', 'Native child failed')));
-        child.once('message', message => {
+        const onMessage = message => {
+          if (timing.enabled && message?.type === 'diagnostic' && message.phase === 'request_received') {
+            trace.requestReceived();
+            return;
+          }
+          if (timing.enabled && message?.type === 'diagnostic' && ['fetch_start', 'response_received', 'body_read_end'].includes(message.phase)) {
+            trace.childPhase(message.phase, message.hop, message.childElapsedMs);
+            return;
+          }
           if (!message || message.type !== 'result') return finish(error('ERR_NATIVE_CHILD', 'Invalid native child response'));
+          if (timing.enabled) trace.childSnapshot(message.diagnosticSnapshot);
           if (message.error) {
             const kind = message.error.kind;
             const failure = kind === 'TypeError' ? new TypeError('Native child request failed') :
@@ -131,7 +155,8 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
               text: async () => bytes.toString('utf8'), json: async () => JSON.parse(bytes.toString('utf8')),
               arrayBuffer: async () => Uint8Array.from(bytes).buffer });
           } catch (_) { finish(error('ERR_NATIVE_CHILD', 'Invalid native child response')); }
-        });
+        };
+        child.on('message', onMessage);
         if (signal?.aborted) return aborted();
         const requestOptions = { timeoutMs: remaining };
         for (const key of ['method', 'body', 'redirect', 'maxBodyBytes', 'profile', 'proxyUrl', 'diagnosticOwner']) {
@@ -139,7 +164,7 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
         }
         try {
           if (options.headers !== undefined) requestOptions.headers = [...new Headers(options.headers)];
-          child.send({ url, options: requestOptions }, failure => {
+          child.send({ url, options: requestOptions, ...(timing.enabled ? { diagnostic: true } : {}) }, failure => {
           if (failure) finish(error('ERR_NATIVE_CHILD', 'Native child IPC failed'));
           });
         } catch (failure) { finish(failure instanceof TypeError ? failure : error('ERR_NATIVE_CHILD', 'Native child IPC failed')); }
@@ -154,10 +179,12 @@ function createIsolatedNativePoolCandidate({ maxSlots = configuredSlots(), admis
         child.once('exit', resolve);
         child.once('close', resolve);
         try { child.kill('SIGKILL'); } catch (_) { /* wait for observed exit */ }
-      })));
+      // Snapshot at close; other pending promise callbacks may still emit later.
+      }))).finally(() => { try { timing.report?.(poolId); } catch (_) { /* diagnostic only */ } });
       return closing;
     }
   };
+  return pool;
 }
 
 module.exports = { createIsolatedNativePoolCandidate, childScriptPath, configuredSlots, killTrackedChildren };

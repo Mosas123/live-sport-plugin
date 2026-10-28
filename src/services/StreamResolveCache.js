@@ -18,6 +18,7 @@ const MAX_TTL_MS = 10 * 60 * 1000;
 const NEGATIVE_TTL_MS = 30 * 1000;
 const MAX_ENTRIES = 200;
 const CHANNEL_MATCH_ID = '__channel__'; // evergreen 24/7 keys survive pruneEnded
+const { withTimingWork } = require('./TimingContext');
 
 // behaviorHints are small plain-JSON trees; a tight recursive copy beats V8's
 // generic structuredClone serializer by 5-15x on these shapes, and cloneStream
@@ -109,6 +110,9 @@ class StreamResolveCache {
     this.maxTtlMs = opts.maxTtlMs ?? MAX_TTL_MS;
     this.negativeTtlMs = opts.negativeTtlMs ?? NEGATIVE_TTL_MS;
     this.maxEntries = opts.maxEntries ?? MAX_ENTRIES;
+    // Experimental opt-in observer; absent in normal operation. An operation
+    // may end in an L2 hit, so it is not proof that a provider was invoked.
+    this.timingRelations = opts.timingRelations ?? null;
 
     this.entries = new Map();   // key -> { streams, matchId, status, resolvedAt, expiresAt, lastAccess }
     this.inFlight = new Map();  // key -> Promise (mint in progress)
@@ -263,7 +267,7 @@ class StreamResolveCache {
     return null;
   }
 
-  async getOrCreate(key, mintFn) {
+  async getOrCreate(key, mintFn, timingStream = null) {
     const now = Date.now();
     const existing = this.entries.get(key);
 
@@ -281,6 +285,7 @@ class StreamResolveCache {
 
     const pending = this.inFlight.get(key);
     if (pending) {
+      this._linkTiming(timingStream, this.pendingOperations.get(key)?.timingWork);
       await pending.catch(() => {});
       return this.get(key) || [];
     }
@@ -298,10 +303,37 @@ class StreamResolveCache {
       .finally(() => {
         this.inFlight.delete(key);
         this.pendingOperations.delete(key);
+        if (operation.timingWork) {
+          try { this.timingRelations?.endWork(operation.timingWork); } catch (_) { /* diagnostic only */ }
+        }
       });
     this.inFlight.set(key, p);
+    // Reserve before invoking any diagnostic callback: a synchronous sink can
+    // itself call getOrCreate and must observe this same in-flight operation.
+    if (this.timingRelations) {
+      try { operation.timingWork = this.timingRelations.work(key.split(':', 1)[0]); } catch (_) { /* diagnostic only */ }
+      this._linkTiming(timingStream, operation.timingWork);
+    }
     await p.catch(() => {});
     return this.get(key) || [];
+  }
+
+  _linkTiming(stream, work) {
+    if (!this.timingRelations || !stream || !work) return;
+    try { this.timingRelations.link(stream, work); } catch (_) { /* diagnostic only */ }
+  }
+
+  async _timedMint(operation, mintFn) {
+    const work = operation.timingWork;
+    if (work) { try { this.timingRelations?.startMint(work); } catch (_) { /* diagnostic only */ } }
+    let outcome = 'threw';
+    try {
+      const value = await withTimingWork(work, mintFn);
+      outcome = 'returned';
+      return value;
+    } finally {
+      if (work) { try { this.timingRelations?.endMint(work, outcome); } catch (_) { /* diagnostic only */ } }
+    }
   }
 
   async _resolveAndStore(key, mintFn, operation) {
@@ -359,7 +391,9 @@ class StreamResolveCache {
     const matchId = parts[1];
     const p = (async () => {
       try {
-        const streams = await mintFn();
+        const streams = await (operation.timingWork
+          ? this._timedMint(operation, mintFn)
+          : withTimingWork(null, mintFn));
         // Pruning can run while the provider is resolving. Discard both
         // positive and negative late answers before touching either cache.
         if (operation.pruned) return;

@@ -8,6 +8,7 @@ const { BASE_URL } = require('./config');
 const { performance } = require('perf_hooks');
 const SkTechCrypto = require('./resolver/sktech/SkTechCrypto');
 const { manifestPlaybackUrl } = require('./services/ManifestPlaybackUrl');
+const { relations: timingRelations } = require('./services/TimingRuntime');
 
 // Source selection (shared by handleStream and prewarmMatch)
 function detectChannelCountry(channelName) {
@@ -1267,6 +1268,10 @@ async function handleStream(type, id, config) {
   const HARD_DEADLINE_MS = Number(process.env.STREAM_HARD_DEADLINE_MS || 15000);
   const SOFT_DEADLINE_MS = Math.min(Number(process.env.STREAM_SOFT_DEADLINE_MS || 6000), HARD_DEADLINE_MS);
   const resolutionStartedAt = Date.now();
+  let timingStream = null;
+  if (timingRelations) {
+    try { timingStream = timingRelations.stream(); } catch (_) { /* diagnostic only */ }
+  }
 
   const inFlight = [];        // per-source promise + settled result for the fallback wait
   const races = activeSources.map((src) => {
@@ -1274,7 +1279,7 @@ async function handleStream(type, id, config) {
     const isPriority1 = src.source === 'daddylive' || SOURCE_PRIORITY[src.source] === 1;
     const state = { key, source: src.source, isPriority1, promise: null, settled: false, value: [] };
     const promise = resolveCache
-      .getOrCreate(key, () => mintVerifiedSources(src, match, config, key))
+      .getOrCreate(key, () => mintVerifiedSources(src, match, config, key), timingStream)
       .then((minted) => {
         state.value = Array.isArray(minted) ? minted.map((st) => ({ ...st, _cacheKey: key })) : [];
         state.settled = true;
@@ -1334,6 +1339,9 @@ async function handleStream(type, id, config) {
     lateCount = inFlight.filter(f => !f.settled).length;
   } else if (lateCount > 0) {
     console.log(`[streams.js] Early return for ${matchId}: ${lateCount} source(s) still resolving (will be cached)`);
+  }
+  if (timingStream) {
+    try { timingRelations.endWindow(timingStream, inFlight.length, inFlight.filter(f => !f.settled).length); } catch (_) { /* diagnostic only */ }
   }
   // Withhold per-team 24/7 channels until the fixture is actually in its
   // playable window (see suppressPreMatchTeamChannels). Applied to the assembled

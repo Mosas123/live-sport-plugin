@@ -34,7 +34,7 @@ function filteredHeaders(value) {
   return Object.fromEntries(headers);
 }
 
-function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot = createNativeGuardedSlot,
+function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot = createNativeGuardedSlot, onPhase = null,
   recycleMs = Math.max(600000, Number(process.env.IMPIT_RECYCLE_MS) || 5400000), now = Date.now } = {}) {
   if (!Number.isInteger(maxSlots) || maxSlots < 1 || maxSlots > 4) throw new RangeError('Native pool supports 1–4 slots');
   if (!Number.isFinite(recycleMs) || recycleMs < 600000) throw new RangeError('Invalid native recycle interval');
@@ -42,6 +42,7 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
   const poolId = randomBytes(4).toString('hex');
   let nextKeyId = 1, nextSlotId = 1;
   let closed = false, closing;
+  const mark = (phase, hop) => { try { onPhase?.(phase, hop); } catch (_) { /* diagnostic only */ } };
   async function acquire(key, configuration, signal, owner) {
     if (closed) throw error('ERR_NATIVE_POOL_CLOSED', 'Native pool closed');
     let record = records.find(item => item.key === key && item.slot && !item.reserved && !item.slot.busy);
@@ -147,8 +148,10 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
             received = await record.slot.run(url.href, async (client, operationSignal = signal) => {
               // Never pass the caller signal to the native wrapper. The slot
               // owns cancellation and waits for the underlying body operation.
+              mark('fetch_start', hop);
               const response = await client.fetch(url.href, { method, headers,
                 body, redirect: 'manual', timeout: remaining });
+              mark('response_received', hop);
               const abortResponse = () => {
                 if (typeof response.abort === 'function') {
                   try { response.abort(); } catch (_) { /* cancellation remains best effort */ }
@@ -170,6 +173,7 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
                   return { status: response.status, location };
                 }
                 const limited = responseBody ? await readLimitedBody(responseBody, maxBodyBytes) : { buffer: Buffer.alloc(0), truncated: false };
+                mark('body_read_end', hop);
                 completed = true;
                 return { status: response.status, headers: responseHeaders, bytes: Buffer.from(limited.buffer), truncated: limited.truncated };
               } finally {

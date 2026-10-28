@@ -71,7 +71,10 @@ async function spawnResolver() {
   // Shutdown may have started while the asynchronous health probe was pending.
   if (isShuttingDown) return;
   if (alive) {
-    console.log(`[Resolver] Verified healthy stream resolver active on 127.0.0.1:${RESOLVER_PORT}`);
+    // An HTTP response proves reachability only; it does not identify the
+    // listener. The current shared-worker routing still requires a separate
+    // ownership fix before this path can be considered safe.
+    console.warn(`[Resolver] HTTP response detected on 127.0.0.1:${RESOLVER_PORT}; resolver ownership is unverified`);
     return;
   }
 

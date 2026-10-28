@@ -32,7 +32,7 @@ function fixture(worker = '0') {
   });
   const context = {
     module: { exports: {} }, __dirname: '/fixture/src', process: processMock,
-    console: { log: jest.fn(), error: jest.fn() },
+    console: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
     setTimeout: (fn, delay) => {
       const timer = { fn, delay, unref: jest.fn(), cleared: false };
       timers.push(timer); return timer;
@@ -48,7 +48,7 @@ function fixture(worker = '0') {
     }
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/resolverManager.js'), 'utf8'), context);
-  return { ...context.module.exports, requests, timers, children, spawn, execSync, shutdown, processMock };
+  return { ...context.module.exports, requests, timers, children, spawn, execSync, shutdown, processMock, logs: context.console };
 }
 async function tick() { await Promise.resolve(); await Promise.resolve(); }
 async function failedProbe(f, start = 0) {
@@ -58,6 +58,8 @@ async function failedProbe(f, start = 0) {
 }
 
 describe('resolver shutdown across asynchronous health checks', () => {
+  test.todo('unverified HTTP 200 or 404 occupant is not adopted or contacted by proxy or cache');
+  test.todo('two workers use only a verified shared resolver across owner restart and port replacement');
   test('does not spawn or kill ports after shutdown during failed initial probe', async () => {
     const f = fixture();
     f.shutdownResolver(); await failedProbe(f);
@@ -107,6 +109,15 @@ describe('resolver shutdown across asynchronous health checks', () => {
   test('healthy existing resolver remains reused', async () => {
     const f = fixture(); f.requests[0].callback({ resume() {}, statusCode: 200 });
     await tick(); expect(f.spawn).not.toHaveBeenCalled(); expect(f.execSync).not.toHaveBeenCalled();
+    expect(f.logs.warn).toHaveBeenCalledWith(expect.stringContaining('ownership is unverified'));
+  });
+  test('characterization: an unrelated HTTP error response also prevents resolver startup', async () => {
+    const f = fixture();
+    f.requests[0].callback({ resume() {}, statusCode: 404 });
+    await tick();
+    // Current unsafe behaviour: an HTTP response does not identify its owner.
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.execSync).not.toHaveBeenCalled();
   });
   test('secondary worker never starts a child', async () => {
     const f = fixture('1'); await failedProbe(f);

@@ -47,6 +47,16 @@ test('a buffered response remains available after the child is terminated', asyn
   expect(pool.occupied).toBe(0); pool.close();
 });
 
+test('fetch remains callable when detached from its pool object', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const fetch = pool.fetch;
+  const pending = fetch('https://cdn.example.org/');
+  child.emit('message', { type: 'result', status: 200, url: 'https://cdn.example.org/', headers: [], bytes: Buffer.from('fixture') });
+  expect(await (await pending).text()).toBe('fixture');
+  child.emit('exit', 0);
+  await pool.close();
+});
+
 test('caller cancellation does not pass its signal into IPC or free capacity early', async () => {
   const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
   const controller = new AbortController();
@@ -64,6 +74,25 @@ test('a child exit without a response fails the caller and frees its capacity', 
   child.emit('exit', 1);
   await expect(pending).rejects.toMatchObject({ code: 'ERR_NATIVE_CHILD_EXIT' });
   expect(pool.occupied).toBe(0); pool.close();
+});
+
+test('exit followed by close releases a slot only once', async () => {
+  const children = [];
+  const pool = createIsolatedNativePoolCandidate({ maxSlots: 1, admissionWaitMs: 1000, spawn: () => {
+    const child = fakeChild(); children.push(child); return child;
+  } });
+  const first = pool.fetch('https://example.org/').catch(error => error);
+  const second = pool.fetch('https://example.org/').catch(error => error);
+  children[0].emit('exit', 1);
+  await first;
+  await Promise.resolve();
+  expect(children).toHaveLength(2);
+  children[0].emit('close', 1);
+  expect(pool.occupied).toBe(1);
+  children[1].emit('exit', 1);
+  await second;
+  expect(pool.occupied).toBe(0);
+  await pool.close();
 });
 
 test('four timed-out children block a fifth until an exit allows replacement', async () => {
