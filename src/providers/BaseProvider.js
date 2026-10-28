@@ -121,6 +121,7 @@ class BaseProvider {
       timeoutMs: options.timeoutMs || 15000,
       attempts: options.attempts,
       diagnosticOwner: options.diagnosticOwner,
+      maxBodyBytes: options.maxBodyBytes,
     };
 
     return await _safeFetch(url, reqOptions);

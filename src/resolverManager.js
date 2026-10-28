@@ -149,7 +149,17 @@ function shutdownResolver() {
   try { container.resolve('browserSniffer').shutdown(); } catch (_) {}
 }
 process.on('exit', shutdownResolver);
-process.on('SIGINT', () => { shutdownResolver(); process.exit(0); });
-process.on('SIGTERM', () => { shutdownResolver(); process.exit(0); });
+let terminating = false;
+async function shutdownOnSignal() {
+  if (terminating) return;
+  terminating = true;
+  shutdownResolver();
+  const { closeNativePool } = require('./services/NativeShutdown');
+  const closed = await closeNativePool(() => require('./services/SharedOutboundFetch').closeSharedOutbound());
+  if (!closed) console.warn('[Shutdown] Native pool did not confirm closure before the deadline');
+  process.exit(0);
+}
+process.on('SIGINT', shutdownOnSignal);
+process.on('SIGTERM', shutdownOnSignal);
 
 module.exports = { workerOffset, RESOLVER_PORT, spawnResolver, shutdownResolver };

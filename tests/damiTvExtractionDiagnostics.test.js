@@ -32,3 +32,13 @@ test('DamiTV extraction has an explicit bounded WARP-compatible deadline', async
   expect(provider.proxyFetch.mock.calls[0][1]).toMatchObject({ timeoutMs: 11000 });
   expect(provider.proxyFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
 });
+
+test('logs a safe reason when extraction has no usable embed URL', async () => {
+  const provider = new DamiTvProvider({ circuitBreaker: { wrapSync: (_name, fn) => ({ fire: fn }) } });
+  const log = jest.spyOn(console, 'info').mockImplementation(() => {});
+  try {
+    expect(await provider.resolveStream('invalid-secret', '', '')).toEqual([]);
+    expect(log.mock.calls.flat().join(' ')).toContain('missing_embed_url');
+    expect(log.mock.calls.flat().join(' ')).not.toContain('invalid-secret');
+  } finally { log.mockRestore(); }
+});

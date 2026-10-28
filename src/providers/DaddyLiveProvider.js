@@ -189,9 +189,11 @@ class DaddyLiveProvider extends BaseProvider {
             },
             signal: AbortSignal.timeout(homeBudgetMs),
             timeoutMs: homeBudgetMs,
+            maxBodyBytes: 8 * 1024 * 1024,
             diagnosticOwner: 'catalog',
             attempts: 1
           });
+          if (homeRes && homeRes.bodyTruncated) throw new Error('DaddyLive schedule exceeds its 8 MiB limit');
           if (homeRes && homeRes.ok) {
             const homeHtml = typeof homeRes.text === 'function' ? await homeRes.text() : homeRes.text;
             const parsed = this.parseScheduleHtml(homeHtml);

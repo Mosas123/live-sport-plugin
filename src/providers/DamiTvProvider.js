@@ -303,13 +303,15 @@ class DamiTvProvider extends BaseProvider {
     const streams = [];
 
     let embedUrl = src.url || src.embedUrl || sourceId;
-    if (!embedUrl || !embedUrl.startsWith('http')) return streams;
+    if (!embedUrl || !embedUrl.startsWith('http')) { console.info('[DamiTV] Extraction skipped', JSON.stringify({ reason: 'missing_embed_url' })); return streams; }
 
     try {
       const urlObj = new URL(embedUrl);
       const matchId = urlObj.searchParams.get('id');
 
-      if (!matchId) return streams;
+      if (!matchId) { console.info('[DamiTV] Extraction skipped', JSON.stringify({ reason: 'missing_match_id' })); return streams; }
+
+      console.info('[DamiTV] Extraction started');
 
       let extractData = null;
       let extractPhase = 'fetch';
@@ -348,6 +350,7 @@ class DamiTvProvider extends BaseProvider {
       };
 
       if (extractData && extractData.success) {
+        console.info('[DamiTV] Extraction response', JSON.stringify({ success: true, hasHls: !!extractData.hlsUrl, hasSd: !!extractData.sdUrl }));
         if (extractData.hlsUrl) {
           const isTikTokStream = Boolean(/streamed\/admin|strmd\.st|\.image|tiktokcdn|byteoversea/i.test(extractData.hlsUrl));
           const s = new StreamEntity({
