@@ -1352,7 +1352,28 @@ class MatchAggregator {
       }
     } else {
       // Fast parallel fetching (Render / Local)
-      const results = await Promise.allSettled(providersToQuery.map(p => this._fetchProviderMatches(p)));
+      // A provider that never settles used to hang the whole sync: allSettled waits
+      // forever, CronService.syncing is only cleared in finally, and every later
+      // sync (4-hourly cron and stale-while-revalidate) returns immediately at the
+      // top of runSync(). Observed on production 2026-10-27: sktech never settled,
+      // the sync sat in "running" for 16 h and the catalogue stayed frozen. Bound
+      // each provider so one hang costs that provider's data, not the refresh.
+      const PROVIDER_SYNC_TIMEOUT_MS = Math.max(5000, Number(process.env.PROVIDER_SYNC_TIMEOUT_MS || 180000));
+      const withProviderTimeout = (provider) => {
+        let timer = null;
+        const limit = new Promise((resolve) => {
+          timer = setTimeout(() => {
+            const name = (provider && (provider.name || provider.id)) || 'unknown';
+            console.warn('[MatchAggregator] provider ' + name + ' exceeded ' + PROVIDER_SYNC_TIMEOUT_MS + 'ms during sync; continuing without it');
+            resolve({ status: 'rejected', reason: new Error('provider sync timeout') });
+          }, PROVIDER_SYNC_TIMEOUT_MS);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+        });
+        const work = this._fetchProviderMatches(provider).finally(() => { if (timer) clearTimeout(timer); });
+        return Promise.race([work, limit]);
+      };
+
+      const results = await Promise.allSettled(providersToQuery.map(withProviderTimeout));
       for (let index = 0; index < results.length; index++) {
         const promiseResult = results[index];
         if (promiseResult.status === 'fulfilled') {
