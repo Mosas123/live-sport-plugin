@@ -1,0 +1,10 @@
+# Example only. Never install for production; review paths and lifecycle first.
+[Unit]
+Description=Isolated Nuvio resolver socket (%i)
+
+[Socket]
+ListenStream=/run/nuvio-resolver-test-%i/resolver.sock
+DirectoryMode=0700
+SocketMode=0600
+Accept=no
+Service=nuvio-resolver-test@%i.service

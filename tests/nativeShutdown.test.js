@@ -25,7 +25,7 @@ test('signal handler waits for the shared pool before exiting', async () => {
   const section = source.slice(source.indexOf('let terminating = false;'), source.indexOf('\nmodule.exports'));
   let finish, handler;
   const close = jest.fn(() => new Promise(resolve => { finish = resolve; }));
-  const processStub = { on: (event, fn) => { if (event === 'SIGTERM') handler = fn; }, exit: jest.fn() };
+  const processStub = { env: {}, on: (event, fn) => { if (event === 'SIGTERM') handler = fn; }, exit: jest.fn() };
   const shutdownResolver = jest.fn();
   const owned = new EventEmitter(); owned.exitCode = null; owned.signalCode = null;
   vm.runInNewContext(section, { process: processStub, console, shutdownResolver, resolverProcess: owned,
@@ -38,5 +38,23 @@ test('signal handler waits for the shared pool before exiting', async () => {
   finish(); await Promise.resolve();
   expect(processStub.exit).not.toHaveBeenCalled();
   owned.emit('exit', 0); await pending;
+  expect(processStub.exit).toHaveBeenCalledWith(0);
+});
+
+test('socket TLS mode waits for its resolver transport during signal shutdown', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/resolverManager.js'), 'utf8');
+  const section = source.slice(source.indexOf('let terminating = false;'), source.indexOf('\nmodule.exports'));
+  let finish, handler;
+  const closeTransport = jest.fn(() => new Promise(resolve => { finish = resolve; }));
+  const processStub = { env: { RESOLVER_TRANSPORT: 'systemd-unix-tls' },
+    on: (event, fn) => { if (event === 'SIGTERM') handler = fn; }, exit: jest.fn() };
+  vm.runInNewContext(section, { process: processStub, console, shutdownResolver: jest.fn(), resolverProcess: null,
+    require: name => name === './services/NativeShutdown' ? { closeNativePool, waitForChildExit } :
+      name === './services/ResolverTransportRuntime' ? { resolverTransport: { close: closeTransport } } : { closeSharedOutbound: async () => {} } });
+  const pending = handler();
+  await Promise.resolve();
+  expect(closeTransport).toHaveBeenCalledTimes(1);
+  expect(processStub.exit).not.toHaveBeenCalled();
+  finish(); await pending;
   expect(processStub.exit).toHaveBeenCalledWith(0);
 });
