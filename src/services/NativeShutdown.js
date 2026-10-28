@@ -11,4 +11,9 @@ async function closeNativePool(close, timeoutMs = 3000) {
   } finally { clearTimeout(timer); }
 }
 
-module.exports = { closeNativePool };
+function waitForChildExit(child) {
+  if (!child || child.exitCode != null || child.signalCode != null) return Promise.resolve();
+  return new Promise(resolve => child.once('exit', resolve));
+}
+
+module.exports = { closeNativePool, waitForChildExit };

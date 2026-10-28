@@ -1,5 +1,6 @@
 'use strict';
-const { closeNativePool } = require('../src/services/NativeShutdown');
+const { closeNativePool, waitForChildExit } = require('../src/services/NativeShutdown');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -26,13 +27,16 @@ test('signal handler waits for the shared pool before exiting', async () => {
   const close = jest.fn(() => new Promise(resolve => { finish = resolve; }));
   const processStub = { on: (event, fn) => { if (event === 'SIGTERM') handler = fn; }, exit: jest.fn() };
   const shutdownResolver = jest.fn();
-  vm.runInNewContext(section, { process: processStub, console, shutdownResolver,
-    require: name => name === './services/NativeShutdown' ? { closeNativePool } : { closeSharedOutbound: close } });
+  const owned = new EventEmitter(); owned.exitCode = null; owned.signalCode = null;
+  vm.runInNewContext(section, { process: processStub, console, shutdownResolver, resolverProcess: owned,
+    require: name => name === './services/NativeShutdown' ? { closeNativePool, waitForChildExit } : { closeSharedOutbound: close } });
   const pending = handler();
   await Promise.resolve();
   expect(shutdownResolver).toHaveBeenCalledTimes(1);
   expect(close).toHaveBeenCalledTimes(1);
   expect(processStub.exit).not.toHaveBeenCalled();
-  finish(); await pending;
+  finish(); await Promise.resolve();
+  expect(processStub.exit).not.toHaveBeenCalled();
+  owned.emit('exit', 0); await pending;
   expect(processStub.exit).toHaveBeenCalledWith(0);
 });

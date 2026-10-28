@@ -153,10 +153,18 @@ let terminating = false;
 async function shutdownOnSignal() {
   if (terminating) return;
   terminating = true;
+  const { closeNativePool, waitForChildExit } = require('./services/NativeShutdown');
+  const ownedResolver = resolverProcess;
+  const resolverExit = waitForChildExit(ownedResolver);
+  console.info('[Shutdown] Cleanup started', JSON.stringify({ resolverOwned: !!ownedResolver }));
   shutdownResolver();
-  const { closeNativePool } = require('./services/NativeShutdown');
-  const closed = await closeNativePool(() => require('./services/SharedOutboundFetch').closeSharedOutbound());
+  const [closed, resolverClosed] = await Promise.all([
+    closeNativePool(() => require('./services/SharedOutboundFetch').closeSharedOutbound()),
+    closeNativePool(() => resolverExit)
+  ]);
+  console.info('[Shutdown] Cleanup finished', JSON.stringify({ nativePoolClosed: closed, resolverExited: resolverClosed }));
   if (!closed) console.warn('[Shutdown] Native pool did not confirm closure before the deadline');
+  if (!resolverClosed) console.warn('[Shutdown] Owned resolver did not confirm exit before the deadline');
   process.exit(0);
 }
 process.on('SIGINT', shutdownOnSignal);
