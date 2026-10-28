@@ -126,7 +126,7 @@ lost events, ambiguous duplicates and invalid ordering; it is not a count of
 network failures. Percentiles describe observed samples only and must be read
 with unavailable counts. Redirects after the first hop are not summarized.
 
-Local follow-up (not yet in the draft): active diagnostic components emit
+The experimental diagnostic components emit
 best-effort cumulative snapshots every 30 seconds, in addition to the existing
 close/exit summaries. The timers do not keep the process alive and the pool
 timer stops on close. A short capture can still have no snapshots; stdout or
@@ -136,8 +136,13 @@ validation before the campaign. If no valid snapshot of a given kind is seen,
 its loss counters are reported as null rather than zero. Repeated cumulative
 snapshots are grouped per writer (and pool where applicable); even a present
 snapshot does not prove that every writer or the end of capture was observed.
+The report separates the number of writer/pool series (`snapshots`) from valid
+snapshot lines (`snapshotObservations`). `repeatedSnapshots` counts additional
+lines in existing series; it does not claim that those lines are duplicates.
+Without unique snapshot IDs, an identical repeated line can be either a genuine
+duplicate or an unchanged periodic observation.
 
-Local follow-up (not yet in the draft): the report also aggregates observed
+The experimental report also aggregates observed
 `stream_resolution_window_end` events, including windows with unsettled sources
 and observed duration p95. Invalid and duplicate windows are excluded and
 counted. An observed end is not proof of deadline cutoff, and missing starts,

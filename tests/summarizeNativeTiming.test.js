@@ -42,8 +42,24 @@ test('repeated cumulative snapshots are counted once per process session and poo
     `[NativeTimingSummary] ${JSON.stringify({ ...summary, poolId: 'defa5678', dropped: 2 })}`];
   const report = await summarizeStream(Readable.from([lines.join('\n')]));
   expect(report.snapshots.native).toBe(2);
-  expect(report.duplicateSnapshots).toBe(2);
+  expect(report.repeatedSnapshots).toBe(2);
+  expect(report.snapshotObservations).toEqual({ native: 4, stream: 0, output: 0 });
+  expect(report).not.toHaveProperty('duplicateSnapshots');
   expect(report.losses.nativeDropped).toBe(7);
+});
+
+test('periodic snapshot lines are counted separately from their three writer series', async () => {
+  const identity = { pid: 10, sessionId: 'b'.repeat(32) };
+  const lines = [];
+  for (let i = 0; i < 4; i++) lines.push(`[NativeTimingSummary] ${JSON.stringify({ ...identity, poolId: 'abcd1234', dropped: i })}`);
+  for (let i = 0; i < 5; i++) lines.push(`[StreamTimingSummary] ${JSON.stringify({ ...identity, dropped: 0 })}`);
+  for (let i = 0; i < 4; i++) lines.push(`[TimingOutputSummary] ${JSON.stringify({ ...identity, rejected: 0, failed: 0 })}`);
+  const report = await summarizeStream(Readable.from([lines.join('\n')]));
+  expect(report.snapshots).toEqual({ native: 1, stream: 1, output: 1 });
+  expect(report.snapshotObservations).toEqual({ native: 4, stream: 5, output: 4 });
+  expect(report.repeatedSnapshots).toBe(10);
+  expect(report.losses.nativeDropped).toBe(3);
+  expect(report.completeness).toBe('unknown');
 });
 
 test('caps retained timing records and flags truncation', async () => {

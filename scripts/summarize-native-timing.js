@@ -48,9 +48,10 @@ function decodeLine(line) {
 
 async function summarizeStream(input, limit = MAX_TIMING_RECORDS) {
   const rows = [], snapshots = { native: 0, stream: 0, output: 0 };
+  const snapshotObservations = { native: 0, stream: 0, output: 0 };
   const losses = { nativeDropped: 0, streamDropped: 0, outputRejected: 0, outputFailed: 0 };
   const snapshotGroups = new Map();
-  let ignoredLines = 0, otherTimingEvents = 0, invalidSnapshots = 0, duplicateSnapshots = 0, truncated = false;
+  let ignoredLines = 0, otherTimingEvents = 0, invalidSnapshots = 0, repeatedSnapshots = 0, truncated = false;
   const validNumber = value => Number.isSafeInteger(value) && value >= 0;
   const reader = readline.createInterface({ input, crlfDelay: Infinity });
   for await (const line of reader) {
@@ -73,7 +74,10 @@ async function summarizeStream(input, limit = MAX_TIMING_RECORDS) {
     }
     const key = `${decoded.summaryKind}:${v.pid}:${v.sessionId}:${decoded.summaryKind === 'native' ? v.poolId : ''}`;
     const previous = snapshotGroups.get(key);
-    if (previous) duplicateSnapshots++;
+    snapshotObservations[decoded.summaryKind]++;
+    // A later snapshot from the same writer is expected. Without a snapshot
+    // identity we cannot distinguish an actual duplicate from equal counters.
+    if (previous) repeatedSnapshots++;
     snapshotGroups.set(key, { kind: decoded.summaryKind,
       dropped: Math.max(previous?.dropped || 0, v.dropped || 0),
       rejected: Math.max(previous?.rejected || 0, v.rejected || 0),
@@ -90,7 +94,7 @@ async function summarizeStream(input, limit = MAX_TIMING_RECORDS) {
   if (!snapshots.native) losses.nativeDropped = null;
   if (!snapshots.stream) losses.streamDropped = null;
   if (!snapshots.output) { losses.outputRejected = null; losses.outputFailed = null; }
-  return { timingRecords: rows.length, truncated, ignoredLines, otherTimingEvents, invalidSnapshots, duplicateSnapshots, snapshots, losses,
+  return { timingRecords: rows.length, truncated, ignoredLines, otherTimingEvents, invalidSnapshots, repeatedSnapshots, snapshots, snapshotObservations, losses,
     // Counts can overlap; do not add nativeDropped and outputRejected together.
     // Missing summaries, unfinished work, accepted writes and forced exit leave
     // completeness unknown even if all observed counts are zero.
