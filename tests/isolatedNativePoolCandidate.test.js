@@ -1,0 +1,164 @@
+'use strict';
+const { EventEmitter } = require('node:events');
+const { createIsolatedNativePoolCandidate } = require('../src/services/IsolatedNativePoolCandidate');
+const { createSharedOutboundFetch } = require('../src/services/SharedOutboundFetch');
+
+function fakeChild() {
+  const child = new EventEmitter();
+  child.send = jest.fn((_message, callback) => callback());
+  child.kill = jest.fn();
+  return child;
+}
+
+test('timeout kills the child and holds capacity until exit is observed', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://damitv.st/', { timeoutMs: 30, profile: 'vanilla', proxyUrl: 'socks5://127.0.0.1:40000' });
+  expect(child.send.mock.calls[0][0].options).toMatchObject({ profile: 'vanilla', proxyUrl: 'socks5://127.0.0.1:40000' });
+  await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+  expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  expect(pool.occupied).toBe(1);
+  await expect(pool.fetch('https://damitv.st/')).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_BUSY' });
+  child.emit('exit', 1); expect(pool.occupied).toBe(0);
+  pool.close();
+});
+
+test('a buffered response remains available after the child is terminated', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://cdn.example.org/');
+  child.emit('message', { type: 'result', status: 200, url: 'https://cdn.example.org/', headers: [['content-type', 'text/plain']], bytes: Buffer.from('fixture') });
+  const response = await pending;
+  expect(await response.text()).toBe('fixture');
+  expect(pool.occupied).toBe(1);
+  child.emit('exit', 0);
+  expect(pool.occupied).toBe(0); pool.close();
+});
+
+test('caller cancellation does not pass its signal into IPC or free capacity early', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const controller = new AbortController();
+  const pending = pool.fetch('https://cdn.example.org/', { signal: controller.signal });
+  expect(child.send.mock.calls[0][0].options.signal).toBeUndefined();
+  controller.abort(new Error('stop'));
+  await expect(pending).rejects.toThrow('stop');
+  expect(pool.occupied).toBe(1);
+  child.emit('exit', 1); expect(pool.occupied).toBe(0); pool.close();
+});
+
+test('a child exit without a response fails the caller and frees its capacity', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://cdn.example.org/');
+  child.emit('exit', 1);
+  await expect(pending).rejects.toMatchObject({ code: 'ERR_NATIVE_CHILD_EXIT' });
+  expect(pool.occupied).toBe(0); pool.close();
+});
+
+test('four timed-out children block a fifth until an exit allows replacement', async () => {
+  const children = [], pool = createIsolatedNativePoolCandidate({ spawn: () => { const child = fakeChild(); children.push(child); return child; } });
+  const controllers = Array.from({ length: 4 }, () => new AbortController());
+  const requests = controllers.map(controller => pool.fetch('https://damitv.st/', { signal: controller.signal }).catch(error => error));
+  controllers.forEach(controller => controller.abort(new Error('deadline')));
+  await Promise.all(requests);
+  expect(pool.occupied).toBe(4);
+  await expect(pool.fetch('https://damitv.st/')).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_BUSY' });
+  children[0].emit('exit', 1);
+  const replacement = pool.fetch('https://damitv.st/', { profile: 'vanilla', proxyUrl: 'socks5://127.0.0.1:40000' });
+  expect(children).toHaveLength(5);
+  expect(children[4].send.mock.calls[0][0].options.proxyUrl).toBe('socks5://127.0.0.1:40000');
+  children[4].emit('message', { type: 'result', status: 200, url: 'https://damitv.st/', headers: [], bytes: Buffer.from('ok') });
+  expect(await (await replacement).text()).toBe('ok');
+  children.slice(1).forEach(child => child.emit('exit', 0));
+  expect(pool.occupied).toBe(0); pool.close();
+});
+
+test.each([
+  [{ code: 'ERR_OUTBOUND_BLOCKED', kind: 'Error', isFatal: true }, 'ERR_OUTBOUND_BLOCKED'],
+  [{ code: 'ERR_NATIVE_CHILD', kind: 'TypeError' }, 'ERR_NATIVE_CHILD']
+])('child rejection preserves non-retryable policy without leaking a native message', async (failure, expectedCode) => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const fallback = jest.fn(), delay = jest.fn();
+  const fetch = createSharedOutboundFetch({ nativeFetch: (url, options) => pool.fetch(url, options), fallbackFetch: fallback, delay });
+  const pending = fetch('https://cdn.example.org/');
+  child.emit('message', { type: 'result', error: { ...failure, message: 'secret-url-or-credential' } });
+  let caught;
+  try { await pending; } catch (error) { caught = error; }
+  expect(caught.code).toBe(expectedCode);
+  if (failure.kind === 'TypeError') expect(caught).toBeInstanceOf(TypeError);
+  if (failure.code === 'ERR_OUTBOUND_BLOCKED') expect(caught).toMatchObject({ isFatal: true, statusCode: 403 });
+  expect(String(caught)).not.toContain('secret-url-or-credential');
+  expect(fallback).not.toHaveBeenCalled(); expect(delay).not.toHaveBeenCalled();
+  child.emit('exit', 1); pool.close();
+});
+
+test('copies headers to IPC and excludes unrelated nonserializable options', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://cdn.example.org/', { headers: new Headers({ 'x-test': 'fixture' }), unrelated: () => {} });
+  expect(child.send.mock.calls[0][0].options).toMatchObject({ headers: [['x-test', 'fixture']] });
+  expect(child.send.mock.calls[0][0].options.unrelated).toBeUndefined();
+  child.emit('message', { type: 'result', status: 200, url: 'https://cdn.example.org/', headers: [], bytes: Buffer.from('ok') });
+  await pending; child.emit('exit', 0); pool.close();
+});
+
+test('shutdown waits for observed child exit and rejects new requests', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://cdn.example.org/').catch(error => error);
+  let finished = false;
+  const closing = pool.close().then(() => { finished = true; });
+  await Promise.resolve(); expect(finished).toBe(false);
+  expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  await expect(pool.fetch('https://cdn.example.org/')).rejects.toMatchObject({ code: 'ERR_NATIVE_POOL_CLOSED' });
+  child.emit('exit', 1);
+  expect(await pending).toMatchObject({ code: 'ERR_NATIVE_CHILD_EXIT' });
+  await closing;
+  expect(finished).toBe(true); expect(pool.occupied).toBe(0);
+});
+
+test('a spawn failure reporting close without exit returns its capacity', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const pending = pool.fetch('https://cdn.example.org/');
+  child.emit('error', new Error('spawn failure'));
+  await expect(pending).rejects.toMatchObject({ code: 'ERR_NATIVE_UNAVAILABLE' });
+  expect(pool.occupied).toBe(1);
+  child.emit('close', -1);
+  expect(pool.occupied).toBe(0);
+  await pool.close();
+});
+
+test('synchronous spawn failures do not leak sensitive error details or consume capacity', async () => {
+  const pool = createIsolatedNativePoolCandidate({ spawn: () => { throw new Error('secret path'); } });
+  let failure;
+  try { await pool.fetch('https://cdn.example.org/'); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: 'ERR_NATIVE_UNAVAILABLE' });
+  expect(String(failure)).not.toContain('secret path');
+  expect(pool.occupied).toBe(0); await pool.close();
+});
+
+test('capacity reports a stable slot and phase without URLs or proxy credentials', async () => {
+  let clock = 1000;
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, now: () => clock, spawn: () => child });
+  const controller = new AbortController();
+  const pending = pool.fetch('https://cdn.example.org/private?token=secret', {
+    signal: controller.signal, profile: 'vanilla', proxyUrl: 'socks5://user:password@127.0.0.1:40000', diagnosticOwner: 'manifest'
+  }).catch(error => error);
+  const capacity = async () => { try { await pool.fetch('https://other.example.org/'); } catch (failure) { return failure.capacityDiagnostic; } };
+  clock += 250;
+  const running = await capacity();
+  expect(running.slots[0]).toMatchObject({ slotId: 1, phase: 'running', ageMs: 250, profile: 'vanilla', egress: 'proxy', owner: 'manifest' });
+  controller.abort(new Error('stop')); await pending;
+  clock += 100;
+  const terminating = await capacity();
+  expect(terminating.slots[0]).toMatchObject({ slotId: 1, phase: 'terminating', ageMs: 350 });
+  expect(JSON.stringify(terminating)).not.toMatch(/secret|password|127\.0\.0\.1|cdn\.example/);
+  child.emit('exit', 1); await pool.close();
+});
+
+test('DamitTV proxy egress survives the shared policy and a 403 never falls back directly', async () => {
+  const child = fakeChild(), pool = createIsolatedNativePoolCandidate({ maxSlots: 1, spawn: () => child });
+  const fallbackFetch = jest.fn();
+  const fetch = createSharedOutboundFetch({ nativeFetch: (url, options) => pool.fetch(url, options), fallbackFetch });
+  const pending = fetch('https://damitv.st/', { proxyUrl: 'socks5://127.0.0.1:40000', attempts: 1 });
+  expect(child.send.mock.calls[0][0].options).toMatchObject({ proxyUrl: 'socks5://127.0.0.1:40000', profile: 'vanilla' });
+  child.emit('message', { type: 'result', status: 403, url: 'https://damitv.st/', headers: [], bytes: Buffer.from('fixture') });
+  expect((await pending).status).toBe(403);
+  expect(fallbackFetch).not.toHaveBeenCalled();
+  child.emit('exit', 0); await pool.close();
+});

@@ -40,20 +40,21 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
   if (!Number.isFinite(recycleMs) || recycleMs < 600000) throw new RangeError('Invalid native recycle interval');
   const records = [], shutdown = new AbortController();
   const poolId = randomBytes(4).toString('hex');
-  let nextKeyId = 1;
+  let nextKeyId = 1, nextSlotId = 1;
   let closed = false, closing;
   async function acquire(key, configuration, signal, owner) {
     if (closed) throw error('ERR_NATIVE_POOL_CLOSED', 'Native pool closed');
     let record = records.find(item => item.key === key && item.slot && !item.reserved && !item.slot.busy);
     if (record) {
-      record.reserved = true; record.owner = owner;
+      record.reserved = true; record.reservedAt = now(); record.phase = 'acquiring'; record.owner = owner;
       if (now() - record.bornAt > recycleMs) {
         // Match the existing recycle policy, but retire only idle clients and
         // never force GC underneath an active native operation.
-        const retiring = record.slot.close().finally(() => {
+        record.phase = 'retiring';
+        const retiring = Promise.resolve().then(() => record.slot.close()).then(() => {
           const index = records.indexOf(record);
           if (index !== -1) records.splice(index, 1);
-        });
+        }, failure => { record.phase = 'retirement_failed'; throw failure; });
         await withSignal(retiring, signal);
         return acquire(key, configuration, signal, owner);
       }
@@ -62,22 +63,22 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
     // The cap is pool-wide. A different key may reclaim an idle slot;
     // active or initializing slots are never interrupted.
     const keyId = records.find(r => r.key === key)?.keyId || nextKeyId;
-    const diagnostic = () => ({ threadId, poolId, requested: { keyId, profile: configuration.profile, egress: configuration.proxyUrl ? 'proxy' : 'direct', owner }, limit: maxSlots, slots: records.map(r => ({ keyId: r.keyId, profile: r.profile, egress: r.egress, owner: r.owner || 'idle', state: !r.slot ? 'creating' : r.reserved ? 'reserved' : r.slot.busy ? 'busy' : 'idle' })) });
+    const diagnostic = () => ({ threadId, poolId, requested: { keyId, profile: configuration.profile, egress: configuration.proxyUrl ? 'proxy' : 'direct', owner }, limit: maxSlots, slots: records.map(r => ({ slotId: r.slotId, keyId: r.keyId, profile: r.profile, egress: r.egress, owner: r.owner || 'idle', state: !r.slot ? 'creating' : r.reserved ? 'reserved' : r.slot.busy ? 'busy' : 'idle', phase: r.reserved ? r.phase : r.slot?.busy ? 'draining' : 'idle', ...(r.reserved ? { reservationAgeMs: Math.max(0, now() - r.reservedAt) } : {}), ...(r.slot?.busy && r.operationStartedAt !== undefined ? { operationAgeMs: Math.max(0, now() - r.operationStartedAt) } : {}) })) });
     if (records.length >= maxSlots) {
       const idle = records.find(item => item.key !== key && item.slot && !item.reserved && !item.slot.busy);
       if (!idle) throw Object.assign(error('ERR_NATIVE_POOL_BUSY', 'Native pool capacity reached'), { capacityDiagnostic: diagnostic() });
       // Reserve synchronously, before awaiting closure, so another request cannot
       // reuse or evict this slot while its native resources are being released.
-      idle.reserved = true;
+      idle.reserved = true; idle.reservedAt = now(); idle.phase = 'retiring';
       const retiring = Promise.resolve().then(() => idle.slot.close()).then(() => {
         const index = records.indexOf(idle);
         if (index !== -1) records.splice(index, 1);
-      }, failure => { idle.reserved = false; throw failure; });
+      }, failure => { idle.reserved = false; idle.phase = 'idle'; throw failure; });
       await withSignal(retiring, signal);
       return acquire(key, configuration, signal, owner);
     }
     if (!records.some(r => r.key === key)) nextKeyId++;
-    record = { key, keyId, reserved: true, owner, profile: configuration.profile, egress: configuration.proxyUrl ? 'proxy' : 'direct' };
+    record = { key, keyId, slotId: nextSlotId++, reserved: true, reservedAt: now(), phase: 'creating', owner, profile: configuration.profile, egress: configuration.proxyUrl ? 'proxy' : 'direct' };
     records.push(record);
     record.ready = Promise.resolve().then(() => createSlot({ ...slotOptions, ...configuration })).then(async slot => {
       record.slot = slot;
@@ -93,8 +94,9 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
     try {
       await withSignal(record.ready, signal);
       signal.throwIfAborted();
+      record.phase = 'acquiring';
       return record;
-    } catch (failure) { record.reserved = false; throw failure; }
+    } catch (failure) { record.reserved = false; record.phase = 'idle'; throw failure; }
   }
 
   return {
@@ -141,24 +143,43 @@ function createNativeGuardedFetch({ maxSlots = 4, slotOptions = {}, createSlot =
           try {
             signal.throwIfAborted();
             const remaining = Math.max(1, Math.ceil(deadline - performance.now()));
-            received = await record.slot.run(url.href, async client => {
+            record.phase = 'running'; record.operationStartedAt = now();
+            received = await record.slot.run(url.href, async (client, operationSignal = signal) => {
               // Never pass the caller signal to the native wrapper. The slot
               // owns cancellation and waits for the underlying body operation.
               const response = await client.fetch(url.href, { method, headers,
                 body, redirect: 'manual', timeout: remaining });
-              const responseHeaders = new Headers(response.headers);
-              const location = responseHeaders.get('location');
-              if (REDIRECTS.has(response.status) && location) {
-                if (response.body) await response.body.cancel();
-                if (options.redirect === 'error') throw new TypeError('Redirect forbidden');
-                if (options.redirect === 'manual') return { status: response.status, headers: responseHeaders,
-                  bytes: Buffer.alloc(0), truncated: false };
-                return { status: response.status, location };
+              const abortResponse = () => {
+                if (typeof response.abort === 'function') {
+                  try { response.abort(); } catch (_) { /* cancellation remains best effort */ }
+                }
+              };
+              operationSignal.addEventListener('abort', abortResponse, { once: true });
+              let responseBody, completed = false;
+              try {
+                if (operationSignal.aborted) { abortResponse(); operationSignal.throwIfAborted(); }
+                responseBody = response.body;
+                const responseHeaders = new Headers(response.headers);
+                const location = responseHeaders.get('location');
+                if (REDIRECTS.has(response.status) && location) {
+                  if (responseBody) await responseBody.cancel();
+                  completed = true;
+                  if (options.redirect === 'error') throw new TypeError('Redirect forbidden');
+                  if (options.redirect === 'manual') return { status: response.status, headers: responseHeaders,
+                    bytes: Buffer.alloc(0), truncated: false };
+                  return { status: response.status, location };
+                }
+                const limited = responseBody ? await readLimitedBody(responseBody, maxBodyBytes) : { buffer: Buffer.alloc(0), truncated: false };
+                completed = true;
+                return { status: response.status, headers: responseHeaders, bytes: Buffer.from(limited.buffer), truncated: limited.truncated };
+              } finally {
+                operationSignal.removeEventListener('abort', abortResponse);
+                if (!completed && responseBody && typeof responseBody.cancel === 'function') {
+                  try { await responseBody.cancel(); } catch (_) { /* preserve the original failure */ }
+                }
               }
-              const limited = response.body ? await readLimitedBody(response.body, maxBodyBytes) : { buffer: Buffer.alloc(0), truncated: false };
-              return { status: response.status, headers: responseHeaders, bytes: Buffer.from(limited.buffer), truncated: limited.truncated };
             }, { signal, timeoutMs: remaining });
-          } finally { record.reserved = false; if (!record.slot.busy) record.owner = null; }
+          } finally { record.reserved = false; record.phase = 'idle'; if (!record.slot.busy) { record.owner = null; record.operationStartedAt = undefined; } }
           signal.throwIfAborted();
           if (!received.location) {
             const bytes = received.bytes;

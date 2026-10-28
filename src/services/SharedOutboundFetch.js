@@ -93,7 +93,9 @@ async function fetchSharedOutbound(url, options) {
     singleton = createSharedOutboundFetch({
       nativeFetch: (target, configuration) => {
         if (!nativePool) {
-          nativePool = require('./NativeGuardedFetch').createNativeGuardedFetch();
+          nativePool = process.env.GUARDED_NATIVE_ISOLATION === 'true'
+            ? require('./IsolatedNativePoolCandidate').createIsolatedNativePoolCandidate()
+            : require('./NativeGuardedFetch').createNativeGuardedFetch();
         }
         return nativePool.fetch(target, configuration);
       },
@@ -105,8 +107,11 @@ async function fetchSharedOutbound(url, options) {
 
 async function closeSharedOutbound() {
   const pool = nativePool;
-  nativePool = undefined; singleton = undefined;
-  if (pool) await pool.close();
+  singleton = undefined;
+  if (pool) {
+    await pool.close();
+    if (nativePool === pool) nativePool = undefined;
+  }
 }
 
 module.exports = { createSharedOutboundFetch, fetchSharedOutbound, closeSharedOutbound };

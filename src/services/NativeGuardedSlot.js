@@ -176,7 +176,7 @@ async function createNativeGuardedSlot(options = {}) {
       get busy() { return exclusive.busy; },
       run(targetUrl, operation, runOptions = {}) {
         if (closed) return Promise.reject(Object.assign(new Error('Native slot closed'), { code: 'ERR_NATIVE_SLOT_CLOSED' }));
-        return exclusive.run(async native => {
+        return exclusive.run(async (native, operationSignal) => {
           if (closed) throw Object.assign(new Error('Native slot closed'), { code: 'ERR_NATIVE_SLOT_CLOSED' });
           const target = new URL(targetUrl);
           if (!['http:', 'https:'].includes(target.protocol)) throw new OutboundBlockedError('native_slot_protocol');
@@ -186,7 +186,7 @@ async function createNativeGuardedSlot(options = {}) {
           try {
             await withSignal(assertOutboundUrl(target.href, { resolve: options.resolve }), current.controller.signal);
             try {
-              const value = await operation(native);
+              const value = await operation(native, operationSignal);
               if (current.guardError) throw current.guardError;
               return value;
             } catch (error) { throw current.guardError || error; }
