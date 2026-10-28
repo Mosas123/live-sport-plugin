@@ -298,6 +298,50 @@ Raj's host. The example identity path must be prepared explicitly and must
 refer to the same generation used by both workers. The examples must not be
 installed or used for production.
 
+Local follow-up after Raj's review (not yet validated on his host):
+
+* An isolated-only provisioning script prepares `/run/nuvio-resolver-test-<id>`
+  and an `identity` directory matching the example unit paths. It rejects an
+  existing instance rather than overwriting it and leaves a failed newly created
+  directory for inspection. Tests use a temporary parent and a real OpenSSL test
+  identity; the CLI and `/run` setup have not been exercised on Raj's host.
+  Rotation remains an explicit stop/start process, not an automatic update.
+* The socket's `ExecStartPre` checks that the pre-existing runtime directory
+  is a real directory, owned by the invoking user, with exact mode 0700. The
+  example intentionally requires provisioning first; `DirectoryMode` alone
+  does not repair permissions on an existing directory. The precheck also
+  refuses any existing `resolver.sock` path, including a dangling symlink; it
+  never unlinks it. These checks are not atomic with systemd's subsequent bind
+  and do not protect against a malicious same-user process.
+* The service explicitly references and orders after its socket, and has an
+  `on-failure` restart with a bounded start rate. These declarations do not
+  establish readiness; direct start, crash recovery, retry exhaustion and
+  socket activation must be exercised on the isolated systemd instance.
+* `RemoveOnStop=no` is explicit. Stale paths must be handled by an isolated
+  operator after verifying ownership; automated cleanup must not unlink an
+  unverified occupant. This example deliberately has no `[Install]` section
+  and is intended for manually controlled isolated tests, not boot enablement.
+* No `PrivateNetwork` or AF_UNIX-only restriction is configured: the resolver
+  also makes outbound network calls. Any hardening must preserve and test those
+  calls. The example uses `/usr/bin/env node`; Raj must verify the systemd PATH,
+  the checkout's helper script path and the built resolver path on his host.
+
+Raj's egress review further identifies golf, streamed, goat and relay fetches,
+including playlist-selected CDN hosts. In this checkout the streamed API file is
+`resolver/src/streamed/api.js`. Proposed filesystem and address-family
+restrictions remain candidates, not proven-safe settings: `ProtectHome` may
+hide a build or dependency installed under `/root`, and write requirements of
+dependencies or future changes cannot be ruled out by inspecting only resolver
+source. Verify DNS, all four egress families, a real relay segment, credential
+loading, build/module paths and the negative pin case under the exact proposed
+unit before applying sandbox hardening. Do not add `MemoryDenyWriteExecute`
+without proving Node/V8 and the resolver's WASM worker function correctly.
+Sandbox settings do not establish socket-peer identity or replace TLS pinning.
+
+Neither example has been installed or started, and successful unit syntax
+checking does not establish actual systemd activation, FD delivery, credential
+delivery or restart behavior.
+
 An additional local configuration factory composes this reader with the pinned
 Unix client only for the explicit `systemd-unix-tls` mode. It returns no adapter
 when no mode is selected and rejects unknown modes or missing identity without
