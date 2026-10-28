@@ -66,7 +66,7 @@ jobs:
               echo ""
               echo "  Finish this deploy by hand (brief restart, done deliberately):"
               echo "    cd /root/nuvio-live-sports && pm2 stop nuvio-sports \\"
-              echo "      && npm install --no-audit --no-fund && npm run build \\"
+              echo "      && npm install --no-audit --no-fund && npm run build:local \\"
               echo "      && pm2 start ecosystem.config.js --update-env && pm2 save"
               echo "================================================================"
               echo ""

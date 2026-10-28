@@ -376,6 +376,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
           const impit403 = {
             ok: false,
             status: res.status,
+            url: res.url || url,
             headers: res.headers,
             bodyTruncated,
             text: async () => Buffer.from(buf).toString('utf8'),
@@ -397,6 +398,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
         return {
           ok: res.status >= 200 && res.status < 300,
           status: res.status,
+          url: res.url || url,
           headers: res.headers,
           bodyTruncated,
           text: async () => Buffer.from(buf).toString('utf8'),
@@ -508,6 +510,7 @@ async function fetchWithinDeadline(url, opts, deadlineAt) {
   return {
     ok: res.statusCode >= 200 && res.statusCode < 300,
     status: res.statusCode,
+    url: currentUrl,
     headers: res.headers,
     bodyTruncated,
     text: async () => Buffer.from(buf).toString('utf8'),

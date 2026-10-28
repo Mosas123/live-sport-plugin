@@ -43,10 +43,15 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
 
   // Playlist-only proxy (same as WatchFooty / Streamed.pk .ts): this host fetches
   // the m3u8 with the CDN Referer, then the player pulls every media byte from the CDN.
-  const cacheKey = `${targetUrl}|${referer}|${origin}`;
-  // Recovery key for this stream, if the URL was emitted by our own resolver.
+  // Rewritten child playlists embed this base URL and recovery key, so both
+  // are part of cache identity to prevent one viewer's rewritten URLs leaking to another.
+  const requestBaseUrl = getRequestBaseUrl(req);
   const rck = readRck(req);
   const rckSuffix = rck ? '&rck=' + encodeURIComponent(rck) : '';
+  // Explicit tuple boundaries prevent collisions when URL/header values contain '|'.
+  // This identity also fences remint outcomes, rewritten per-host URLs, negative
+  // entries, and in-flight manifest requests from unrelated viewers.
+  const cacheKey = JSON.stringify([targetUrl, referer, origin, rck || '', requestBaseUrl]);
   const entry = manifestCacheGet(cacheKey);
   if (entry && entry.negative) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -76,9 +81,9 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
           }
         }
 
-        let out;
+        let upstream;
         try {
-          out = await fetchUpstreamManifest(effectiveUrl, referer, origin);
+          upstream = await fetchUpstreamManifest(effectiveUrl, referer, origin, { withResponseUrl: true });
         } catch (firstErr) {
           const fresh = (isExpiryStatus(firstErr) && rck) ? await attemptRemint(rck, effectiveUrl || targetUrl) : null;
           if (!fresh || fresh === effectiveUrl) throw firstErr;
@@ -108,8 +113,12 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
           // Preserve the variant the player asked for (see mergeRemintedUrl).
           effectiveUrl = mergeRemintedUrl(targetUrl, fresh, rck);
           reminted = true;
-          out = await fetchUpstreamManifest(effectiveUrl, referer, origin);
+          upstream = await fetchUpstreamManifest(effectiveUrl, referer, origin, { withResponseUrl: true });
         }
+        const out = upstream.body;
+        // Re-fetch redirected bases on later polls; concurrent viewers still coalesce.
+        const cacheable = !upstream.url || upstream.url === effectiveUrl;
+        effectiveUrl = upstream.url || effectiveUrl;
         if (!out.includes('#EXT')) {
           console.error('[ManifestProxy] Upstream returned non-m3u8 body for', effectiveUrl);
           throw new Error('Upstream returned non-m3u8 body');
@@ -167,22 +176,23 @@ router.get(['/api/manifest', '/api/manifest.m3u8'], async (req, res) => {
           referer,
           origin,
           rckSuffix,
-          absoluteAddonBaseUrl: getRequestBaseUrl(req),
+          absoluteAddonBaseUrl: requestBaseUrl,
           bitrate: out.includes('#EXT-X-STREAM-INF') ? undefined : variantBitrateCache.get(effectiveUrl)
         });
-        manifestCacheSet(cacheKey, rewrittenResult, dynamicTtl);
-        return rewrittenResult;
+        if (cacheable) manifestCacheSet(cacheKey, rewrittenResult, dynamicTtl);
+        return { body: rewrittenResult, cacheable };
       })().finally(() => {
         manifestInFlight.delete(cacheKey);
       });
       manifestInFlight.set(cacheKey, fetchPromise);
     }
 
-    const finalBody = await fetchPromise;
+    const result = await fetchPromise;
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('X-Manifest-Cache', 'MISS');
-    res.send(finalBody);
+    res.setHeader('X-Manifest-Cache', result.cacheable ? 'MISS' : 'BYPASS');
+    if (!result.cacheable) res.setHeader('Cache-Control', 'no-store');
+    res.send(result.body);
   } catch (err) {
     // Preserve the old 404 semantics so players can fail over to another stream.
     if (err.code === 'ERR_OUTBOUND_CAPACITY') {

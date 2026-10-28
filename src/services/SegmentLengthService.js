@@ -17,6 +17,9 @@ const ESTIMATE_SAFETY_FACTOR = 1.0;
 // rewrite cadence does not fire a new probe for the same URL every cycle.
 const PROBE_RETRY_MS = 10 * 1000;
 const MAX_FAILURE_ENTRIES = 5000;
+// A CDN can ignore Range: bytes=0-0 and reply with a full 200 video segment.
+// Only response headers are needed; never buffer the media payload for a probe.
+const PROBE_MAX_BODY_BYTES = 1024;
 
 class SegmentLengthService {
   constructor(opts = {}) {
@@ -148,9 +151,16 @@ class SegmentLengthService {
           method: 'GET',
           headers: { ...headers, Range: 'bytes=0-0' },
           timeoutMs: 4000,
-          attempts: 1
+          attempts: 1,
+          maxBodyBytes: PROBE_MAX_BODY_BYTES
         });
-        const rangedTotal = ranged && ranged.headers ? this._totalLengthFromHeaders(ranged.headers) : 0;
+        // A 206 Content-Length is just the partial body (often one byte), not
+        // the complete segment. Trust only Content-Range's total for 206.
+        // 200 means the CDN ignored Range, but its full object Content-Length
+        // is still useful. Error response lengths are never segment sizes.
+        const rangedTotal = ranged && (ranged.status === 206 || ranged.status === 200)
+          ? this._totalLengthFromHeaders(ranged.headers, ranged.status === 200)
+          : 0;
         if (rangedTotal > CLOAKED_PREFIX_BYTES) {
           const videoBytes = rangedTotal - CLOAKED_PREFIX_BYTES;
           this.setCachedLength(segmentUrl, videoBytes);
@@ -159,8 +169,13 @@ class SegmentLengthService {
         }
 
         // HEAD fallback for CDNs that allow it (Content-Length = full object).
-        const head = await safeFetch(segmentUrl, { method: 'HEAD', headers, timeoutMs: 4000, attempts: 1, guardExternal: true });
-        const headTotal = head && head.headers ? this._totalLengthFromHeaders(head.headers) : 0;
+        const head = await safeFetch(segmentUrl, {
+          method: 'HEAD', headers, timeoutMs: 4000, attempts: 1,
+          maxBodyBytes: PROBE_MAX_BODY_BYTES, guardExternal: true
+        });
+        const headTotal = head && head.status === 200
+          ? this._totalLengthFromHeaders(head.headers)
+          : 0;
         if (headTotal > CLOAKED_PREFIX_BYTES) {
           const videoBytes = headTotal - CLOAKED_PREFIX_BYTES;
           this.setCachedLength(segmentUrl, videoBytes);
@@ -198,7 +213,7 @@ class SegmentLengthService {
    * @param {Object} headers Response-like headers with .get()
    * @returns {number}
    */
-  _totalLengthFromHeaders(headers) {
+  _totalLengthFromHeaders(headers, allowContentLength = true) {
     try {
       const contentRange = headers.get('content-range');
       if (contentRange) {
@@ -208,6 +223,7 @@ class SegmentLengthService {
           if (Number.isFinite(total) && total > 0) return total;
         }
       }
+      if (!allowContentLength) return 0;
       const cl = headers.get('content-length');
       if (cl) {
         const n = parseInt(cl, 10);

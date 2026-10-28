@@ -85,7 +85,7 @@ function playlistHasContent(text) {
 
 // Fetch + validate the upstream manifest. Throws on failure so coalesced
 // waiters share the same outcome; successful bodies are cached by the caller.
-async function fetchUpstreamManifest(targetUrl, referer, origin) {
+async function fetchUpstreamManifest(targetUrl, referer, origin, { withResponseUrl = false } = {}) {
   const deadlineAt = performance.now() + 10000;
   const isVavoo = Boolean(
     (targetUrl && (targetUrl.includes('/sunshine/') || targetUrl.includes('vavoo.') || targetUrl.includes(':8008'))) ||
@@ -115,7 +115,10 @@ async function fetchUpstreamManifest(targetUrl, referer, origin) {
       err.upstreamStatus = result.status;
       throw err;
     }
-    return await result.text();
+    const body = await result.text();
+    // Preserve the default string result for existing callers. The HLS
+    // playlist router opts into metadata for final-redirect relative paths.
+    return withResponseUrl ? { body, url: result.url || targetUrl } : body;
   };
 
   try {

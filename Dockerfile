@@ -13,7 +13,7 @@ COPY . .
 RUN cd resolver && npm install
 
 # Build the bundled distribution
-RUN npm run build
+RUN npm run build:local
 
 # Configure runtime environment
 ENV PORT=7000

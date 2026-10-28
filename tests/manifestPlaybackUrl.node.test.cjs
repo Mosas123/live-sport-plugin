@@ -73,7 +73,10 @@ function fixture(body) {
     manifestCacheSet: (key, value) => entries.set(key, { body: value }),
     manifestCacheSetNegative: () => { throw Error('Unexpected negative result'); },
     notifyResolveCacheOfDeadStream: () => { throw Error('Unexpected dead stream'); },
-    fetchUpstreamManifest: async (...args) => { upstream.push(args); return body; },
+    fetchUpstreamManifest: async (...args) => {
+      upstream.push(args);
+      return args[3]?.withResponseUrl ? { body, url: args[0] } : body;
+    },
     manifestInFlight: new Map()
   };
   const rm = { exports: {} };
