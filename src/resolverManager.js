@@ -91,12 +91,8 @@ async function spawnResolver() {
     return;
   }
 
-  // If we reach here and it's not responding, clear any zombie hanging onto the port (Linux)
-  if (process.platform === 'linux') {
-    try {
-      child_process.execSync(`fuser -k ${RESOLVER_PORT}/tcp 2>/dev/null || true`);
-    } catch (_) {}
-  }
+  // A failed health check does not establish who owns the port. Do not kill
+  // another process by port; a bind conflict must fail without harming it.
 
   const spawnEnv = { ...process.env, PORT: RESOLVER_PORT, HOST: '127.0.0.1' };
   resolverProcess = child_process['sp' + 'awn']('node', [scriptPath], {

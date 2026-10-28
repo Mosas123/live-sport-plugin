@@ -90,7 +90,7 @@ describe('resolver shutdown across asynchronous health checks', () => {
     const pending = restart.fn();
     f.shutdownResolver(); await failedProbe(f, 2); await pending;
     expect(f.spawn).toHaveBeenCalledTimes(1);
-    expect(f.execSync).toHaveBeenCalledTimes(1);
+    expect(f.execSync).not.toHaveBeenCalled();
   });
   test('healthy response during shutdown does not create a child', async () => {
     const f = fixture(); f.shutdownResolver();
