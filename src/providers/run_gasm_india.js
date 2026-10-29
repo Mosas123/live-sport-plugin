@@ -170,7 +170,13 @@ global.Clappr = { Player: class { constructor() {} } };
 global.window.jwplayer = function() {
     return {
         setup: function(config) {
-            console.log('JWPLAYER SETUP CALLED WITH:', JSON.stringify(config, null, 2));
+            const file = config && config.file;
+            const hasPlaylist = typeof file === 'string' && /^https?:\/\/[^"\s]+\.m3u8/.test(file);
+            // Flush the configuration before exiting: callers parse stdout, and
+            // the WASM environment can leave timers or connections alive.
+            process.stdout.write('JWPLAYER SETUP CALLED WITH: ' + JSON.stringify(config, null, 2) + '\n', (err) => {
+                if (!err && hasPlaylist) process.exit(0);
+            });
         },
         once: function() {},
         on: function() {}
