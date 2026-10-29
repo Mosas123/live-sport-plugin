@@ -3,7 +3,7 @@ const { createNativeGuardedFetch } = require('../src/services/NativeGuardedFetch
 
 test('idle native clients rotate on the existing clock without changing the slot cap', async () => {
   let now = 1000, created = 0, closed = 0;
-  const pool = createNativeGuardedFetch({ maxSlots: 1, recycleMs: 600000, now: () => now,
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, recycleMs: 600000, now: () => now,
     slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => {
       created++;
@@ -23,7 +23,7 @@ test('idle native clients rotate on the existing clock without changing the slot
 test('an expired client is not retired underneath an unsettled request', async () => {
   let now = 1000, finish, closed = 0, started;
   const ready = new Promise(resolve => { started = resolve; });
-  const pool = createNativeGuardedFetch({ maxSlots: 1, recycleMs: 600000, now: () => now,
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, recycleMs: 600000, now: () => now,
     slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => ({ busy: false,
       run: (_url, operation) => operation({ fetch: () => { started(); return new Promise(resolve => { finish = resolve; }); } }),
@@ -42,7 +42,7 @@ test('an expired client is not retired underneath an unsettled request', async (
 test('capacity diagnostic identifies holder and masks proxy credentials', async () => {
   let finish, started;
   const ready = new Promise(resolve => { started = resolve; });
-  const pool = createNativeGuardedFetch({ maxSlots: 1,
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0,
     slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => ({ busy: false, run: (_url, op) => op({ fetch: () => { started(); return new Promise(resolve => { finish = resolve; }); } }), close: async () => {} })
   });
@@ -61,7 +61,7 @@ test('capacity diagnostic identifies holder and masks proxy credentials', async 
 test('idle direct slots are reclaimed for a proxy key without exceeding the pool cap', async () => {
   let created = 0, closed = 0;
   const profiles = [];
-  const pool = createNativeGuardedFetch({ maxSlots: 1, slotOptions: { resolve: async () => ['93.184.216.34'] },
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async config => { created++; profiles.push(config.profile); return { busy: false, run: (_url, op) => op({ fetch: async () => new Response('ok') }), close: async () => { closed++; } }; }
   });
   try {
@@ -76,7 +76,7 @@ test('idle direct slots are reclaimed for a proxy key without exceeding the pool
 test('a busy slot is never evicted for a different key', async () => {
   let finish, started, closed = 0;
   const ready = new Promise(resolve => { started = resolve; });
-  const pool = createNativeGuardedFetch({ maxSlots: 1, slotOptions: { resolve: async () => ['93.184.216.34'] },
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => ({ busy: false, run: (_url, op) => op({ fetch: () => { started(); return new Promise(resolve => { finish = resolve; }); } }), close: async () => { closed++; } })
   });
   try {
@@ -89,7 +89,7 @@ test('a busy slot is never evicted for a different key', async () => {
 test('a slot being closed for eviction cannot be reused or evicted twice', async () => {
   let releaseClose, startedClose, closes = 0, created = 0;
   const closeStarted = new Promise(resolve => { startedClose = resolve; });
-  const pool = createNativeGuardedFetch({ maxSlots: 1, slotOptions: { resolve: async () => ['93.184.216.34'] },
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => { created++; const id = created; return { busy: false, run: (_url, op) => op({ fetch: async () => new Response('ok') }),
       close: async () => { closes++; if (id === 1) { startedClose(); await new Promise(resolve => { releaseClose = resolve; }); } } }; }
   });
@@ -104,7 +104,7 @@ test('a slot being closed for eviction cannot be reused or evicted twice', async
 
 test('a failed idle-slot close does not create a replacement or lose the slot', async () => {
   let created = 0, closeCalls = 0;
-  const pool = createNativeGuardedFetch({ maxSlots: 1, slotOptions: { resolve: async () => ['93.184.216.34'] },
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => { created++; return { busy: false, run: (_url, op) => op({ fetch: async () => new Response('ok') }),
       close: async () => { closeCalls++; if (closeCalls === 1) throw new Error('close failed'); } }; }
   });
@@ -118,7 +118,7 @@ test('a failed idle-slot close does not create a replacement or lose the slot', 
 test('capacity diagnostics identify an aging retirement without leaking addresses', async () => {
   let now = 1000, finishClose, beginClose, closed = 0;
   const closing = new Promise(resolve => { beginClose = resolve; });
-  const pool = createNativeGuardedFetch({ maxSlots: 1, now: () => now,
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, now: () => now,
     slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => ({ busy: false, run: (_url, op) => op({ fetch: async () => new Response('ok') }),
       close: () => { if (++closed === 1) { beginClose(); return new Promise(resolve => { finishClose = resolve; }); } return Promise.resolve(); } }) });
@@ -144,7 +144,7 @@ test('capacity diagnostics identify an aging retirement without leaking addresse
 
 test('failed age-based retirement never removes an unclosed slot or creates a replacement', async () => {
   let now = 1000, created = 0, closeCalls = 0;
-  const pool = createNativeGuardedFetch({ maxSlots: 1, recycleMs: 600000, now: () => now,
+  const pool = createNativeGuardedFetch({ maxSlots: 1, admissionWaitMs: 0, recycleMs: 600000, now: () => now,
     slotOptions: { resolve: async () => ['93.184.216.34'] },
     createSlot: async () => { created++; return { busy: false, run: (_url, op) => op({ fetch: async () => new Response('ok') }),
       close: async () => { if (++closeCalls === 1) throw new Error('close failed'); } }; } });
