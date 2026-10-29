@@ -1487,6 +1487,16 @@ async function handleStream(type, id, config) {
         // are quality tags, not channel names (e.g. Leaf's "(FHD)").
         if (!/^(?:\d{3,4}p\d{0,2}|sd|hd|fhd|uhd|4k(?:\s+uhd)?|8k)$/i.test(inner) && inner !== 'Auto' && !inner.toLowerCase().startsWith('stream')) {
           channelName = inner;
+        } else {
+          // Some providers (ak47/fawanews) emit "[CHANNEL NAME] <match title> (HD)":
+          // the only parenthesised group is the quality tag, so the channel name
+          // lives in a leading bracket instead. Without this fallback the row kept
+          // no label at all and looked like a duplicate of the match title.
+          const bracketName = originalTitle.match(/^\s*\[([^\]]{2,40})\]/);
+          if (bracketName && bracketName[1] &&
+              !/^(?:\d{3,4}p\d{0,2}|sd|hd|fhd|uhd|4k(?:\s+uhd)?|8k)$/i.test(bracketName[1].trim())) {
+            channelName = bracketName[1].trim();
+          }
         }
       } else if (!originalTitle.includes('Stream') && !originalTitle.includes('Auto')) {
         channelName = originalTitle;

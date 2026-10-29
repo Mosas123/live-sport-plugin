@@ -44,6 +44,10 @@ transport. Compare each record to the SHA-256 fingerprint of the certificate
 presented by the resolver on an actual TLS handshake, and verify both workers
 can connect. Compare DER hashes (64 hexadecimal characters, case-insensitive);
 OpenSSL's colon-separated SHA-256 fingerprint must be normalized before comparing.
+Worker logs may retain records from earlier process generations. Compare each
+current worker PID and its startup record; old records do not indicate that the
+new workers loaded multiple certificates. Match the PID to the current process,
+and consider log timestamps and possible PID reuse.
 An independent probe must validate the expected certificate and server name;
 an unverified fingerprint alone is not proof of ownership. The record is best
 effort, so a missing record is inconclusive;

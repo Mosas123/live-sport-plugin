@@ -8,10 +8,16 @@ const DEFAULT_FALLBACK_LENGTH = 1022720; // 5440 * 188 bytes (MPEG-TS packet ali
 const DEFAULT_BITRATE = 6000000; // 6 Mbps default for 1080p
 const CLOAKED_PREFIX_BYTES = 42; // fake WebP/RIFF header Streamed.pk / TikTok CDN prepends
 
-// Use 1.0 exact safety factor. Pre-probing ensures the exact segment length
-// is known and cached before serving the manifest, matching upstream TikTok CDN
-// byte counts to avoid player decoder EOF stalls and repeated frames.
-const ESTIMATE_SAFETY_FACTOR = 1.0;
+// Over-declare the fallback estimate. An over-declared range is harmless: the CDN
+// answers 206 with the bytes that actually exist, so the player still receives the
+// whole segment. An under-declared range truncates the tail of every chunk
+// mid-GOP, which the decoder shows as a cut frame at each segment boundary.
+// Probed lengths stay exact; only this fallback is padded.
+//
+// PPV.st is why 1.0 cannot come back: its chunks carry ~6.9 Mbps against a
+// 5.45 Mbps BANDWIDTH declaration, so a 1.0 estimate cut 12-33 % of every chunk
+// whenever a probe did not land.
+const ESTIMATE_SAFETY_FACTOR = 1.5;
 
 // After a failed probe, suppress re-probing for this long so the ~2-4s playlist
 // rewrite cadence does not fire a new probe for the same URL every cycle.
@@ -20,6 +26,10 @@ const MAX_FAILURE_ENTRIES = 5000;
 // A CDN can ignore Range: bytes=0-0 and reply with a full 200 video segment.
 // Only response headers are needed; never buffer the media payload for a probe.
 const PROBE_MAX_BODY_BYTES = 1024;
+
+// Auth-style refusals are the only answer that justifies repeating a probe with
+// the provider Referer/Origin; anything else would just repeat the same request.
+const isRefusal = status => status === 401 || status === 403;
 
 class SegmentLengthService {
   constructor(opts = {}) {
@@ -112,6 +122,14 @@ class SegmentLengthService {
    * it returns 1 byte plus "Content-Range: bytes 0-0/<total>" carrying the
    * true object size. HEAD is kept as a fallback for CDNs that allow it.
    *
+   * The probe starts WITHOUT the provider Referer on purpose, because that is
+   * what the player sends and some CDNs reject it outright: on the PPV.st /
+   * TikTok CDN the embed Referer alone turns every segment into 403 (Referer
+   * only -> 403, bare + Range -> 206 with the exact total), which silently
+   * forced every chunk onto the estimate. A 401/403 answer retries once with
+   * the provider headers, so CDNs that genuinely gate on the Referer still
+   * resolve to an exact length.
+   *
    * Resolves with the probed byte length (excluding the 42-byte prefix), or
    * null when the probe failed. Caches only real probed lengths.
    *
@@ -138,49 +156,45 @@ class SegmentLengthService {
     }
     this.activeProbes++;
 
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+    const bareHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
+    };
+    const gatedHeaders = {
+      ...bareHeaders,
       'Referer': opts.referer || 'https://embed.st/',
       'Origin': opts.origin || 'https://embed.st'
     };
 
     const probePromise = (async () => {
       try {
-        const ranged = await safeFetch(segmentUrl, {
-          guardExternal: true,
-          method: 'GET',
-          headers: { ...headers, Range: 'bytes=0-0' },
-          timeoutMs: 4000,
-          attempts: 1,
-          maxBodyBytes: PROBE_MAX_BODY_BYTES
-        });
-        // A 206 Content-Length is just the partial body (often one byte), not
-        // the complete segment. Trust only Content-Range's total for 206.
-        // 200 means the CDN ignored Range, but its full object Content-Length
-        // is still useful. Error response lengths are never segment sizes.
-        const rangedTotal = ranged && (ranged.status === 206 || ranged.status === 200)
-          ? this._totalLengthFromHeaders(ranged.headers, ranged.status === 200)
-          : 0;
-        if (rangedTotal > CLOAKED_PREFIX_BYTES) {
-          const videoBytes = rangedTotal - CLOAKED_PREFIX_BYTES;
-          this.setCachedLength(segmentUrl, videoBytes);
-          this.probeFailures.delete(segmentUrl);
-          return videoBytes;
+        const ranged = await this._rangedProbe(segmentUrl, bareHeaders);
+        if (ranged.total > CLOAKED_PREFIX_BYTES) {
+          return this._cacheProbedLength(segmentUrl, ranged.total);
+        }
+
+        // A refusal is the only signal worth repeating with provider headers.
+        // A CDN that answered but carried no usable size will not answer better
+        // just because we re-introduce a Referer it may dislike.
+        const providerRequired = isRefusal(ranged.status);
+        const activeHeaders = providerRequired ? gatedHeaders : bareHeaders;
+
+        if (providerRequired) {
+          const retried = await this._rangedProbe(segmentUrl, activeHeaders);
+          if (retried.total > CLOAKED_PREFIX_BYTES) {
+            return this._cacheProbedLength(segmentUrl, retried.total);
+          }
         }
 
         // HEAD fallback for CDNs that allow it (Content-Length = full object).
-        const head = await safeFetch(segmentUrl, {
-          method: 'HEAD', headers, timeoutMs: 4000, attempts: 1,
-          maxBodyBytes: PROBE_MAX_BODY_BYTES, guardExternal: true
-        });
-        const headTotal = head && head.status === 200
-          ? this._totalLengthFromHeaders(head.headers)
-          : 0;
-        if (headTotal > CLOAKED_PREFIX_BYTES) {
-          const videoBytes = headTotal - CLOAKED_PREFIX_BYTES;
-          this.setCachedLength(segmentUrl, videoBytes);
-          this.probeFailures.delete(segmentUrl);
-          return videoBytes;
+        const head = await this._headProbe(segmentUrl, activeHeaders);
+        if (head.total > CLOAKED_PREFIX_BYTES) {
+          return this._cacheProbedLength(segmentUrl, head.total);
+        }
+        if (!providerRequired && isRefusal(head.status)) {
+          const gatedHead = await this._headProbe(segmentUrl, gatedHeaders);
+          if (gatedHead.total > CLOAKED_PREFIX_BYTES) {
+            return this._cacheProbedLength(segmentUrl, gatedHead.total);
+          }
         }
       } catch (error) {
         // Local transport admission is not evidence that the CDN probe failed.
@@ -204,6 +218,70 @@ class SegmentLengthService {
 
     this.inFlightProbes.set(segmentUrl, probePromise);
     return probePromise;
+  }
+
+  /**
+   * Store a probed length and clear any failure suppression for the URL.
+   *
+   * @param {string} segmentUrl
+   * @param {number} total Upstream object size including the cloaking prefix
+   * @returns {number} Payload byte length excluding the prefix
+   */
+  _cacheProbedLength(segmentUrl, total) {
+    const videoBytes = total - CLOAKED_PREFIX_BYTES;
+    this.setCachedLength(segmentUrl, videoBytes);
+    this.probeFailures.delete(segmentUrl);
+    return videoBytes;
+  }
+
+  /**
+   * Ranged GET probe. Signed CDN objects (TikTok .image etc.) refuse HEAD but
+   * serve ranged GETs, so "Range: bytes=0-0" is the primary shape: it returns
+   * 1 byte plus "Content-Range: bytes 0-0/<total>" carrying the true size.
+   *
+   * @param {string} segmentUrl
+   * @param {Object} headers
+   * @returns {Promise<{status: number, total: number}>}
+   */
+  async _rangedProbe(segmentUrl, headers) {
+    const res = await safeFetch(segmentUrl, {
+      method: 'GET',
+      guardExternal: true,
+      headers: { ...headers, Range: 'bytes=0-0' },
+      timeoutMs: 4000,
+      attempts: 1,
+      maxBodyBytes: PROBE_MAX_BODY_BYTES
+    });
+    // A 206 Content-Length is just the partial body (often one byte), not the
+    // complete segment. Trust only Content-Range's total for 206. A 200 means
+    // the CDN ignored Range, but its full object Content-Length is still
+    // useful. Error response lengths are never segment sizes.
+    const total = res && (res.status === 206 || res.status === 200)
+      ? this._totalLengthFromHeaders(res.headers, res.status === 200)
+      : 0;
+    return { status: res && res.status ? res.status : 0, total };
+  }
+
+  /**
+   * HEAD probe, kept for CDNs that expose the full object size this way.
+   *
+   * @param {string} segmentUrl
+   * @param {Object} headers
+   * @returns {Promise<{status: number, total: number}>}
+   */
+  async _headProbe(segmentUrl, headers) {
+    const res = await safeFetch(segmentUrl, {
+      method: 'HEAD',
+      guardExternal: true,
+      headers,
+      timeoutMs: 4000,
+      attempts: 1,
+      maxBodyBytes: PROBE_MAX_BODY_BYTES
+    });
+    const total = res && res.status === 200
+      ? this._totalLengthFromHeaders(res.headers)
+      : 0;
+    return { status: res && res.status ? res.status : 0, total };
   }
 
   /**
