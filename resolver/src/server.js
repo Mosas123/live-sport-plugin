@@ -4,6 +4,7 @@ import { port, bindHost } from './env.js'
 import { route } from './http/router.js'
 import { systemdSocketFd } from './systemdSocket.js'
 import { systemdTlsOptions } from './systemdTls.js'
+import { logListeningAddress } from './listeningLog.js'
 
 // Invalid explicit activation or TLS configuration must fail startup; it must
 // never silently fall back to an unauthenticated TCP listener.
@@ -12,9 +13,7 @@ const tlsOptions = systemdTlsOptions(process.env, activatedFd)
 const srv = tlsOptions ? createHttpsServer(tlsOptions, route) : createHttpServer(route)
 
 function boot() {
-  const addr = srv.address()
-  const host = typeof addr === 'string' ? addr : `${addr.address.includes(':') ? `[${addr.address}]` : addr.address}:${addr.port}`
-  console.log(typeof addr === 'string' ? '[Resolver] Activated socket is listening' : `http://${host}/`)
+  logListeningAddress(srv)
 }
 
 srv.on('error', (err) => {
