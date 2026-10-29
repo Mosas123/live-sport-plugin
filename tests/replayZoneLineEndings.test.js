@@ -1,7 +1,7 @@
 'use strict';
 
-jest.mock('undici', () => ({ request: jest.fn() }));
-const { request } = require('undici');
+jest.mock('../src/services/ProviderOutbound', () => ({ request: jest.fn() }));
+const { request } = require('../src/services/ProviderOutbound');
 const ReplayZoneProvider = require('../src/providers/ReplayZoneProvider');
 
 describe('ReplayZone replay feed', () => {

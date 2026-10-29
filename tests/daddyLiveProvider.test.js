@@ -187,6 +187,96 @@ describe('DaddyLiveProvider', () => {
       expect(ncaaMatch.sources[0].channelName).toBe('A&E TV USA');
     });
 
+    test('anchors late-night kickoffs to the real day when the header ordinal is malformed ("28h")', async () => {
+      const mockSchedule = {
+        'Wednesday 28h Oct 2026 - Schedule Time UK GMT': {
+          'NBA</span>': [
+            {
+              time: '00:00',
+              event: 'NBA : Chicago Bulls vs New York Knicks',
+              channels: [{ channel_name: 'NBA League Pass', channel_id: '8' }]
+            }
+          ]
+        }
+      };
+
+      const testNow = Date.parse('29 October 2026 02:00:00 UTC');
+      const dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(testNow);
+      provider.proxyFetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '<html>MOCK</html>' });
+      provider.parseScheduleHtml = jest.fn().mockReturnValue(mockSchedule);
+
+      const matches = await provider.getMatches();
+      dateNowSpy.mockRestore();
+
+      const match = matches.find(m => m.title.includes('Knicks'));
+      expect(match).toBeDefined();
+      expect(Number(match.date)).toBe(Date.parse('29 October 2026 00:00:00 UTC'));
+      expect(match.status).toBe('');
+    });
+
+    test('still rolls a pre-06:00 kickoff into the next day for a well-formed header', async () => {
+      const mockSchedule = {
+        'Wednesday 28th Oct 2026 - Schedule Time UK GMT': {
+          'NBA</span>': [
+            {
+              time: '00:00',
+              event: 'NBA : Chicago Bulls vs New York Knicks',
+              channels: [{ channel_name: 'NBA League Pass', channel_id: '8' }]
+            },
+            {
+              time: '20:00',
+              event: 'NBA : Toronto Raptors vs Orlando Magic',
+              channels: [{ channel_name: 'MSG USA', channel_id: '765' }]
+            }
+          ]
+        }
+      };
+
+      // 21:00 on the 28th: the 20:00 event is live, the 00:00 event is still ahead.
+      const testNow = Date.parse('28 October 2026 21:00:00 UTC');
+      const dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(testNow);
+      provider.proxyFetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '<html>MOCK</html>' });
+      provider.parseScheduleHtml = jest.fn().mockReturnValue(mockSchedule);
+
+      const matches = await provider.getMatches();
+      dateNowSpy.mockRestore();
+
+      const lateNight = matches.find(m => m.title.includes('Knicks'));
+      const evening = matches.find(m => m.title.includes('Raptors'));
+      expect(lateNight).toBeDefined();
+      expect(evening).toBeDefined();
+      // Same-day kickoff stays put; the post-midnight one rolls to the 29th.
+      expect(Number(evening.date)).toBe(Date.parse('28 October 2026 20:00:00 UTC'));
+      expect(Number(lateNight.date)).toBe(Date.parse('29 October 2026 00:00:00 UTC'));
+      expect(lateNight.status).toBe('upcoming');
+    });
+
+    test('does not add a second day when the day header is unusable', async () => {
+      const mockSchedule = {
+        'Schedule Time UK GMT': {
+          'NBA</span>': [
+            {
+              time: '00:00',
+              event: 'NBA : Chicago Bulls vs New York Knicks',
+              channels: [{ channel_name: 'NBA League Pass', channel_id: '8' }]
+            }
+          ]
+        }
+      };
+
+      const testNow = Date.parse('29 October 2026 02:00:00 UTC');
+      const dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(testNow);
+      provider.proxyFetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '<html>MOCK</html>' });
+      provider.parseScheduleHtml = jest.fn().mockReturnValue(mockSchedule);
+
+      const matches = await provider.getMatches();
+      dateNowSpy.mockRestore();
+
+      const match = matches.find(m => m.title.includes('Knicks'));
+      expect(match).toBeDefined();
+      expect(Number(match.date)).toBe(Date.parse('29 October 2026 00:00:00 UTC'));
+    });
+
     test('handles fetch errors gracefully without throwing', async () => {
       provider.proxyFetch = jest.fn().mockRejectedValue(new Error('Network offline'));
       const matches = await provider.getMatches();

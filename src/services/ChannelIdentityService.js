@@ -107,6 +107,23 @@ const UPPERCASE_TOKENS = new Set([
   'RTE', 'NPO', 'TVP', 'PPV'
 ]);
 
+// Brands upstream sometimes ships with the trailing digit detached
+// ("TF 1", "M 6"). Left alone, step 7 below reads that digit as a channel
+// number, which both mis-titles the card ("Tf 1") and blocks the merge with
+// the glued spelling ("TF1") on MatchAggregator's channelNumber guard.
+// Only digit-bearing French DTT brands are listed: in "Sky Sports F1",
+// "TV 1000" or "beIN Sports 1" the digit is a real channel number and must
+// keep its own identity.
+const GLUED_BRANDS = ['TF1', 'M6', 'W9', 'C8', 'NRJ12', 'RTL9'];
+const GLUED_BRAND_RE = new RegExp(
+  `\\b(?:${GLUED_BRANDS.map((b) => b.split('').map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*')).join('|')})\\b`,
+  'gi'
+);
+
+function glueBrandDigits(name) {
+  return name.replace(GLUED_BRAND_RE, (m) => m.replace(/\s+/g, '').toUpperCase());
+}
+
 const _channelParseCache = new Map();
 const MAX_CHANNEL_CACHE = 5000;
 
@@ -136,7 +153,7 @@ class ChannelIdentityService {
    * }}
    */
   static parseChannel(rawName, meta = {}) {
-    const raw = String(rawName || '').trim();
+    const raw = glueBrandDigits(String(rawName || '').trim());
     if (!raw) {
       return {
         canonicalTitle: 'Unknown Channel',
