@@ -1,18 +1,51 @@
 const LeafProvider = require('../src/providers/LeafProvider');
 const impitClient = require('../src/impitClient');
 
+const TEST_CONFIG = Buffer.from(JSON.stringify({ freeUserId: 'test-user-id.abcdef' }))
+  .toString('base64')
+  .replace(/\+/g, '-')
+  .replace(/\//g, '_')
+  .replace(/=+$/, '');
+
 describe('LeafProvider Unit Tests', () => {
   let provider;
   let safeFetchSpy;
 
   beforeEach(() => {
+    // Leaf reads its per-install config from the environment (never hardcoded),
+    // so every test has to provide one before the provider is constructed.
+    process.env.LEAF_INSTALL_CONFIG = TEST_CONFIG;
+    delete process.env.LEAF_API_URL;
     provider = new LeafProvider();
   });
 
   afterEach(() => {
     if (safeFetchSpy) {
       safeFetchSpy.mockRestore();
+      safeFetchSpy = null;
     }
+    delete process.env.LEAF_INSTALL_CONFIG;
+    delete process.env.LEAF_API_URL;
+  });
+
+  describe('buildApiUrl()', () => {
+    test('joins the origin and the base64url install config', () => {
+      expect(provider.apiUrl).toBe('https://sports.highfly.to/' + TEST_CONFIG);
+    });
+
+    test('honours LEAF_API_URL as a whole-base override (the production kill switch)', () => {
+      process.env.LEAF_API_URL = 'http://127.0.0.1:9/leaf-disabled';
+      const disabled = new LeafProvider();
+      expect(disabled.apiUrl).toBe('http://127.0.0.1:9/leaf-disabled');
+      expect(disabled.configured).toBe(true);
+    });
+
+    test('is unconfigured when no install config is supplied', async () => {
+      delete process.env.LEAF_INSTALL_CONFIG;
+      const bare = new LeafProvider();
+      expect(bare.configured).toBe(false);
+      await expect(bare.resolveStream('streamed:x', 'football', 'X vs Y')).resolves.toEqual([]);
+    });
   });
 
   describe('getMatches()', () => {
@@ -150,8 +183,31 @@ describe('LeafProvider Unit Tests', () => {
       expect(streams[1]._source).toBe('leaf');
     });
 
+    test('drops the upstream install-nag stub instead of surfacing it as a stream', async () => {
+      // This is the real payload upstream returns today: one fake stream whose
+      // url is the configure page. It must never reach a player.
+      const nag = {
+        streams: [
+          {
+            name: 'Please reinstall the addon',
+            title: 'We have updated our free addon to improve service quality.\nPlease visit sports.highfly.to/configure\nto get a new addon link.',
+            url: 'https://sports.highfly.to/configure',
+            behaviorHints: { notWebReady: true }
+          }
+        ]
+      };
 
-    test('falls back to minted master token when upstream URL lacks query token', async () => {
+      safeFetchSpy = jest.spyOn(impitClient, 'safeFetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => nag
+      });
+
+      const streams = await provider.resolveStream('streamed:test-fixture', 'basketball', 'Test vs Match');
+      expect(streams).toEqual([]);
+    });
+
+    test('skips an unsigned papacito URL rather than minting a token locally', async () => {
       const mockStreamsResponse = {
         streams: [
           {
@@ -169,9 +225,7 @@ describe('LeafProvider Unit Tests', () => {
       });
 
       const streams = await provider.resolveStream('streamed:test-fixture', 'football', 'Test vs Match');
-      expect(streams).toHaveLength(1);
-      expect(streams[0].url).toBe('https://papacito.cfd/m3u/999888/live.m3u8?token=E4V7FE6H6nBzANT35Q2rR7JmTz1a5nCi');
-      expect(streams[0].behaviorHints.notWebReady).toBe(false);
+      expect(streams).toEqual([]);
     });
 
     test('returns empty array when upstream stream resolution fails', async () => {
