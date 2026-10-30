@@ -121,6 +121,10 @@ class SoccerFullSegmentLength {
     this.inFlightPrefix = new Map(); // host -> Promise<number>
     this.inFlightLength = new Map(); // url  -> Promise<number|null>
     this.failures = new Map();      // url  -> timestamp of last failed probe
+    this.maxConcurrentProbes = Number.isSafeInteger(opts.maxConcurrentProbes) && opts.maxConcurrentProbes > 0
+      ? opts.maxConcurrentProbes
+      : 4;
+    this.activeProbes = 0;
   }
 
   _evict(map) {
@@ -250,6 +254,15 @@ class SoccerFullSegmentLength {
     if (cached && cached.expiresAt > Date.now()) return cached.length;
     if (this.inFlightLength.has(segmentUrl)) return this.inFlightLength.get(segmentUrl);
 
+    // A cold SoccerFull playlist can carry 1500+ segments. Rewriting fires one
+    // background probe per uncached segment, so without this cap the first
+    // manifest request would open 1500+ concurrent ranged GETs against the CDN
+    // and starve the event loop (observed: a valid playlist answered 502 while
+    // the box was saturated). Unprobed segments keep their padded estimate,
+    // which is safe by construction - the CDN clamps an over-declared range.
+    if (this.activeProbes >= this.maxConcurrentProbes) return null;
+    this.activeProbes++;
+
     const promise = (async () => {
       try {
         const res = await safeFetch(segmentUrl, {
@@ -279,6 +292,7 @@ class SoccerFullSegmentLength {
       return null;
     })().finally(() => {
       this.inFlightLength.delete(segmentUrl);
+      this.activeProbes = Math.max(0, this.activeProbes - 1);
     });
 
     this.inFlightLength.set(segmentUrl, promise);

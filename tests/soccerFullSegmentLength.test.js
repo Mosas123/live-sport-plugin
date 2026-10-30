@@ -9,6 +9,10 @@
  */
 
 const { rewriteSoccerFullPlaylist } = require('../src/services/SoccerFullHlsRewrite');
+
+// Probes are asserted on how they are *scheduled*, never on their result, so no
+// test in this file touches the network.
+jest.mock('../src/impitClient', () => ({ safeFetch: jest.fn(() => new Promise(() => {})) }));
 const segmentLengthService = require('../src/services/SoccerFullSegmentLength');
 
 const { detectCloakPrefix, SoccerFullSegmentLength } = segmentLengthService;
@@ -69,6 +73,19 @@ describe('SoccerFullSegmentLength caches', () => {
     // 4s * 6 Mbps * 1.5 safety factor, minus the prefix, TS-aligned
     expect(estimate % 188).toBe(0);
     expect(estimate).toBeGreaterThan((4 * 6000000) / 8);
+  });
+
+  test('bounds concurrent length probes so a 1500-segment playlist cannot flood the CDN', () => {
+    const svc = new SoccerFullSegmentLength({ maxConcurrentProbes: 2 });
+    const urls = Array.from({ length: 10 }, (_, i) => `https://cdn.example/${i}.image`);
+
+    urls.forEach(u => svc.probeLength(u));
+
+    expect(svc.activeProbes).toBe(2);
+    expect(svc.inFlightLength.size).toBe(2);
+
+    // Rewriting still returns an estimate for the rest instead of blocking.
+    expect(svc.getSegmentLength(urls[9], { duration: 4 })).toBeGreaterThan(0);
   });
 });
 
