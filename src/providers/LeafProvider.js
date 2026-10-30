@@ -2,6 +2,7 @@ const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 const impitClient = require('../impitClient');
+const { BASE_URL } = require('../config');
 
 // Upstream replaced the old shared-token API with a per-install config path:
 //   https://sports.highfly.to/<base64url(config)>/{catalog,stream}/sport/...
@@ -254,6 +255,9 @@ class LeafProvider extends BaseProvider {
       // locally, so it would answer 403 "Authentication required" at the CDN.
       if (!st.url.includes('?')) continue;
       const directUrl = st.url;
+      const referer = 'https://sports.highfly.to/';
+      const origin = 'https://sports.highfly.to';
+      const manifestProxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(directUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
 
       const rawName = st.name || '';
       const rawTitle = st.title || '';
@@ -296,7 +300,7 @@ class LeafProvider extends BaseProvider {
       resolved.push(new StreamEntity({
         name: `Leaf [${quality}]`,
         title: channelLabel ? `(${channelLabel}) ${quality}` : `Leaf Stream · ${quality}`,
-        url: directUrl,
+        url: manifestProxyUrl,
         resolution,
         quality,
         bitrate,
