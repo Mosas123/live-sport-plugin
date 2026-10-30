@@ -662,7 +662,18 @@ function verificationHeaders(stream) {
 async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache, opts = {}) {
 
   const checkedStreams = await Promise.all(streams.map(async (s) => {
-    if (!s || !s.url) return null;
+    if (!s) return null;
+    // Web-player results are represented by externalUrl, not a media URL.
+    // They do not need an HLS probe and must survive the verification step.
+    if (!s.url) {
+      if (typeof s.externalUrl !== 'string' || /[\u0000-\u0020\u007f]/.test(s.externalUrl)) return null;
+      try {
+        const external = new URL(s.externalUrl, 'https://external.invalid');
+        const isLocal = s.externalUrl.startsWith('/') && !/^\/[\\/]/.test(s.externalUrl);
+        if (!isLocal && !/^https?:\/\//i.test(s.externalUrl)) return null;
+        return ['http:', 'https:'].includes(external.protocol) && !external.username && !external.password ? s : null;
+      } catch (_) { return null; }
+    }
 
     // Filter out broken/dead SprintCDN links (edge*-*-sprintcdn.*) which fail on user devices
     if (s.url.includes('sprintcdn')) {
