@@ -41,6 +41,12 @@ describe('LeafProvider Unit Tests', () => {
       expect(disabled.configured).toBe(true);
     });
 
+    test('strips trailing manifest.json from LEAF_API_URL if supplied', () => {
+      process.env.LEAF_API_URL = 'https://sports.highfly.to/scoped_id/manifest.json';
+      const p = new LeafProvider();
+      expect(p.apiUrl).toBe('https://sports.highfly.to/scoped_id');
+    });
+
     test('is unconfigured when no install config is supplied', async () => {
       delete process.env.LEAF_INSTALL_CONFIG;
       const bare = new LeafProvider();

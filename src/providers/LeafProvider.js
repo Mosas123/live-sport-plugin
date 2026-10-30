@@ -59,7 +59,7 @@ class LeafProvider extends BaseProvider {
    */
   static buildApiUrl() {
     const override = process.env.LEAF_API_URL;
-    if (override) return override.replace(/\/+$/, '');
+    if (override) return override.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
 
     const origin = (process.env.LEAF_API_ORIGIN || DEFAULT_ORIGIN).replace(/\/+$/, '');
     const config = process.env.LEAF_INSTALL_CONFIG ||
