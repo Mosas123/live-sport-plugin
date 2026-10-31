@@ -33,7 +33,7 @@ test('cancelled waiter is removed and a later waiter can proceed', async () => {
 });
 test('queue wait is bounded and does not create a second slot', async () => {
   const {pool, operations, count} = fixture({admissionWaitMs: 20}); const a = pool.fetch('https://cdn.example.org/a');
-  try { await until(() => operations.length === 1); await expect(pool.fetch('https://cdn.example.org/b')).rejects.toMatchObject({code:'ERR_NATIVE_POOL_BUSY'}); expect(count()).toBe(1); }
+  try { await until(() => operations.length === 1); await expect(pool.fetch('https://cdn.example.org/b')).rejects.toMatchObject({code:'ERR_NATIVE_POOL_BUSY', capacityDiagnostic: {admission:'expired'}}); expect(count()).toBe(1); }
   finally { operations.forEach(x => x.resolve()); await Promise.allSettled([a]); await pool.close(); }
 });
 test('request deadline expires while queued without allocating another slot', async () => {
@@ -43,7 +43,7 @@ test('request deadline expires while queued without allocating another slot', as
 });
 test('a full queue rejects excess work without growing the slot count', async () => {
   const {pool, operations, count} = fixture({maxWaiters:1}); const a = pool.fetch('https://cdn.example.org/a'); let b;
-  try { await until(()=>operations.length===1); b=pool.fetch('https://cdn.example.org/b'); await turn(); await expect(pool.fetch('https://cdn.example.org/c')).rejects.toMatchObject({code:'ERR_NATIVE_POOL_BUSY'}); expect(count()).toBe(1); operations[0].resolve(); await a; await until(()=>operations.length===2); operations[1].resolve(); await b; }
+  try { await until(()=>operations.length===1); b=pool.fetch('https://cdn.example.org/b'); await turn(); await expect(pool.fetch('https://cdn.example.org/c')).rejects.toMatchObject({code:'ERR_NATIVE_POOL_BUSY', capacityDiagnostic: {admission:'queue_full'}}); expect(count()).toBe(1); operations[0].resolve(); await a; await until(()=>operations.length===2); operations[1].resolve(); await b; }
   finally { operations.forEach(x=>x.resolve()); await Promise.allSettled([a,...(b?[b]:[])]); await pool.close(); }
 });
 test('close aborts a queued caller without allocating a new slot', async () => {

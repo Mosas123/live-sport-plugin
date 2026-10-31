@@ -54,7 +54,8 @@ function createNativeGuardedFetch({ maxSlots = 4, maxWaiters = 128, admissionWai
     signal.throwIfAborted();
     const remaining = until - performance.now();
     if (remaining <= 0 || waiters.length + (wakeInFlight ? 1 : 0) >= maxWaiters) {
-      return Promise.reject(Object.assign(error('ERR_NATIVE_POOL_BUSY', 'Native pool capacity reached'), { capacityDiagnostic: diagnostic() }));
+      const admission = remaining <= 0 ? 'expired' : 'queue_full';
+      return Promise.reject(Object.assign(error('ERR_NATIVE_POOL_BUSY', 'Native pool capacity reached'), { capacityDiagnostic: { ...diagnostic(), admission } }));
     }
     return new Promise((resolve, reject) => {
       let timer;
@@ -69,7 +70,7 @@ function createNativeGuardedFetch({ maxSlots = 4, maxWaiters = 128, admissionWai
       }
       if (front) waiters.unshift(waiter); else waiters.push(waiter);
       signal.addEventListener('abort', abort, { once: true });
-      timer = setTimeout(() => finish(reject, Object.assign(error('ERR_NATIVE_POOL_BUSY', 'Native pool capacity reached'), { capacityDiagnostic: diagnostic() })), remaining);
+      timer = setTimeout(() => finish(reject, Object.assign(error('ERR_NATIVE_POOL_BUSY', 'Native pool capacity reached'), { capacityDiagnostic: { ...diagnostic(), admission: 'expired' } })), remaining);
       if (signal.aborted) abort();
     });
   }
