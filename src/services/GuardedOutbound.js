@@ -4,6 +4,7 @@ const dns = require('node:dns');
 const net = require('node:net');
 const { Agent, Socks5ProxyAgent, buildConnector, request } = require('undici');
 const { checkOutboundUrl } = require('./OutboundUrlGuard');
+const { filterRedirectHeaders, shouldDropRedirectBody } = require('./RedirectHeaderPolicy');
 
 class OutboundBlockedError extends Error {
   constructor(reason) {
@@ -202,12 +203,9 @@ async function guardedRequest(rawUrl, options = {}) {
       try { next = new URL(Array.isArray(location) ? location[0] : location, url); }
       catch (_) { throw new OutboundBlockedError('invalid_redirect'); }
       if (new URL(url).origin !== next.origin) {
-        // Same fixed credential-name boundary as the pending redirect review;
-        // arbitrary provider-specific token headers are a separate policy issue.
-        headers = Object.fromEntries(Object.entries(headers).filter(([name]) =>
-          !['authorization', 'cookie', 'cookie2', 'proxy-authorization'].includes(name.toLowerCase())));
+        headers = filterRedirectHeaders(headers);
       }
-      if (method !== 'HEAD' && response.statusCode !== 307 && response.statusCode !== 308) {
+      if (shouldDropRedirectBody(response.statusCode, method)) {
         method = 'GET'; body = undefined;
         headers = Object.fromEntries(Object.entries(headers).filter(([name]) =>
           !['content-length', 'content-type', 'content-encoding'].includes(name.toLowerCase())));

@@ -174,6 +174,7 @@ async function createNativeGuardedSlot(options = {}) {
     const exclusive = createNativeExclusiveSlot(client, cancelLease);
     return {
       get busy() { return exclusive.busy; },
+      whenIdle() { return exclusive.whenIdle(); },
       run(targetUrl, operation, runOptions = {}) {
         if (closed) return Promise.reject(Object.assign(new Error('Native slot closed'), { code: 'ERR_NATIVE_SLOT_CLOSED' }));
         return exclusive.run(async (native, operationSignal) => {

@@ -20,6 +20,7 @@ const MAX_ENTRIES = 200;
 const CHANNEL_MATCH_ID = '__channel__'; // evergreen 24/7 keys survive pruneEnded
 const { withTimingWork } = require('./TimingContext');
 const resolverConflictState = require('./ResolverConflictState');
+const { allowsLegacyResolverTcp } = require('./ResolverTrustPolicy');
 
 // behaviorHints are small plain-JSON trees; a tight recursive copy beats V8's
 // generic structuredClone serializer by 5-15x on these shapes, and cloneStream
@@ -267,7 +268,7 @@ class StreamResolveCache {
     try { if (this.resolverConflictState.hasConflict() !== false) return false; }
     catch (_) { return false; }
     if (!_sharedAvailable()) return false;
-    if (this.sharedResolver === null) return true; // legacy path; still unverified
+    if (this.sharedResolver === null) return allowsLegacyResolverTcp();
     try {
       return typeof this.sharedResolver.available === 'function' &&
         typeof this.sharedResolver.request === 'function' && this.sharedResolver.available() === true;

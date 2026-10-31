@@ -100,7 +100,12 @@ global.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: ()
 global.btoa = (str) => Buffer.from(str).toString('base64');
 global.atob = (b64Encoded) => Buffer.from(b64Encoded, 'base64').toString();
 
-const { fetch: guardedFetch } = require('../services/ProviderOutbound');
+// The build copies this script to the output root, alongside services/;
+// in the source tree it lives under providers/, one level below services/.
+const outboundPath = fs.existsSync(path.join(__dirname, 'services', 'ProviderOutbound.js'))
+  ? './services/ProviderOutbound'
+  : '../services/ProviderOutbound';
+const { fetch: guardedFetch } = require(outboundPath);
 const gasmSafeFetch = (url, options = {}) => guardedFetch(url, { ...options, profile: 'vanilla', attempts: 1 });
 const OriginalRequest = global.Request;
 global.Request = function(input, init) {
@@ -165,7 +170,13 @@ global.Clappr = { Player: class { constructor() {} } };
 global.window.jwplayer = function() {
     return {
         setup: function(config) {
-            console.log('JWPLAYER SETUP CALLED WITH:', JSON.stringify(config, null, 2));
+            const file = config && config.file;
+            const hasPlaylist = typeof file === 'string' && /^https?:\/\/[^"\s]+\.m3u8/.test(file);
+            // Flush the configuration before exiting: callers parse stdout, and
+            // the WASM environment can leave timers or connections alive.
+            process.stdout.write('JWPLAYER SETUP CALLED WITH: ' + JSON.stringify(config, null, 2) + '\n', (err) => {
+                if (!err && hasPlaylist) process.exit(0);
+            });
         },
         once: function() {},
         on: function() {}

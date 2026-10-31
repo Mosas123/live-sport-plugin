@@ -29,6 +29,29 @@ describe('guarded external redirect transport', () => {
     expect(redirectBody.destroy).toHaveBeenCalledTimes(1);
   });
 
+  test('same-origin retains headers, cross-origin strips custom headers even on return', async () => {
+    request.mockResolvedValueOnce({ statusCode: 302, headers: { location: '/same' }, body: body() })
+      .mockResolvedValueOnce({ statusCode: 302, headers: { location: 'https://other.example.org/next' }, body: body() })
+      .mockResolvedValueOnce({ statusCode: 302, headers: { location: 'https://cdn.example.org/back' }, body: body() })
+      .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: body('ok') });
+    await guardedFetch('https://cdn.example.org/start', { headers: { 'X-Api-Key': 'fixture', Authorization: 'fixture', 'User-Agent': 'client', Range: 'bytes=0-1', Referer: 'https://private.example/?token=fixture' } });
+    expect(request.mock.calls[1][1].headers['X-Api-Key']).toBe('fixture');
+    for (const call of request.mock.calls.slice(2)) {
+      expect(call[1].headers['X-Api-Key']).toBeUndefined(); expect(call[1].headers.Authorization).toBeUndefined();
+      expect(call[1].headers.Referer).toBeUndefined(); expect(call[1].headers.Range).toBe('bytes=0-1');
+      expect(call[1].headers['User-Agent']).toBe('client');
+    }
+  });
+  test.each([[301, 'POST', 'GET'], [302, 'PUT', 'PUT'], [303, 'PUT', 'GET'], [307, 'POST', 'POST'], [308, 'POST', 'POST']])('redirect %i preserves or drops body according to method', async (status, method, expected) => {
+    request.mockResolvedValueOnce({ statusCode: status, headers: { location: '/next' }, body: body() })
+      .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: body('ok') });
+    await guardedFetch('https://cdn.example.org/start', { method, body: 'fixture', headers: { 'Content-Type': 'text/plain', 'Content-Length': '7' } });
+    const next = request.mock.calls[1][1];
+    expect(next.method).toBe(expected);
+    if (expected === 'GET') { expect(next.body).toBeUndefined(); expect(next.headers['Content-Length']).toBeUndefined(); expect(next.headers['Content-Type']).toBeUndefined(); }
+    else { expect(next.body).toBe('fixture'); expect(next.headers['Content-Type']).toBe('text/plain'); }
+  });
+
   test('valid relative redirects preserve signed query and response URL', async () => {
     request.mockResolvedValueOnce({ statusCode: 302, headers: { location: '/live/index.m3u8?token=a%2Bb%3D' }, body: body() })
       .mockResolvedValueOnce({ statusCode: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' }, body: body('#EXTM3U\nseg.ts') });

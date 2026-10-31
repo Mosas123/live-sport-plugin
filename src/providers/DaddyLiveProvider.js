@@ -622,7 +622,12 @@ class DaddyLiveProvider extends BaseProvider {
 
       for (const dayHeader of Object.keys(scheduleOk ? data : {})) {
         // Parse date header (e.g. "Friday 18th Sep 2026 - Schedule Time UK GMT")
-        const dateMatch = dayHeader.match(/(\d+)(?:st|nd|rd|th)\s+([A-Za-z]+)(?:\s+(\d{4}))?/i);
+        // Do not require a well-formed ordinal: upstream ships typos such as
+        // "Wednesday 28h Oct 2026" and headers with no suffix at all. When this
+        // match failed, dayStr became '' for the whole block and every kickoff
+        // fell through to the time-only branch below, publishing the overnight
+        // slate one day late.
+        const dateMatch = dayHeader.match(/(\d{1,2})\s*[a-z]{0,3}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})/i);
         const currentYear = new Date().getUTCFullYear();
         const year = dateMatch && dateMatch[3] ? parseInt(dateMatch[3], 10) : currentYear;
         const dayStr = dateMatch ? `${dateMatch[1]} ${dateMatch[2]} ${year}` : '';
@@ -729,12 +734,11 @@ class DaddyLiveProvider extends BaseProvider {
               }
             }
             if (!matchTime && ev.time) {
-              const parsed = parseTimezone(ev.time, 'UTC');
-              if (parsed && ev.time < '06:00') {
-                matchTime = parsed + (24 * 3600 * 1000);
-              } else {
-                matchTime = parsed;
-              }
+              // No usable day header, so there is no block date to roll a late
+              // kickoff into: parseTimezone already resolves the wall clock
+              // relative to today, and adding a day on top of it moved the whole
+              // overnight slate 24 h into the future.
+              matchTime = parseTimezone(ev.time, 'UTC');
             }
             if (!matchTime) {
               continue; // Do not guess unparseable times
