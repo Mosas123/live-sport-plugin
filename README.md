@@ -208,6 +208,10 @@ Visit `http://localhost:7000/configure` to customize:
 
 ## 🚀 Development Workflow
 
+Before adding a provider, follow the [Spanish provider guide](docs/PROVIDER_GUIDE.md),
+[English guide](docs/PROVIDER_GUIDE.en.md) and [PR/AI task template](docs/PROVIDER_PR_TEMPLATE.md).
+The guides distinguish current stable from the guarded #59/#61 integration profile.
+
 ```bash
 # 1. Install dependencies
 npm install
@@ -221,8 +225,8 @@ npm run build
 # 4. Launch compiled production server
 npm start
 
-# 5. Scaffold a new scraper from template
-npm run generate:provider
+# 5. Scaffold YAML only; complete integration is described in the provider guide
+npm run generate:provider -- Example
 ```
 
 ---
