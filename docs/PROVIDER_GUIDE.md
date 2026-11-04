@@ -35,19 +35,22 @@ commit, entorno, formato y reproductor que se probaron.
 
 ## 1. Versión y requisitos
 
-**Referencia de esta edición: 4 de noviembre de 2026.** Separar dos perfiles:
+**Referencia de esta edición: 4 de noviembre de 2026, después del merge de #59/#61.**
 
-| Perfil | Qué representa |
+| Referencia | Qué representa |
 | --- | --- |
-| Base documental | `stable` en `92589e4c0bef327d7cc483c3fbe2d40908ba8e17` |
-| Integración guardada | #59 `6ada76562e104598db601c478dabf88437e0556b` y #61 `0c559a6bb5037eb1a02b0919dd399ea328126694`; #61 incluye ese #59 |
+| Base histórica anterior | `stable` en `92589e4c0bef327d7cc483c3fbe2d40908ba8e17` |
+| Stable integrado verificado | `4bcf65e0c42d0a63581f795a58b111cfe94ec30e` |
+| Procedencia revisada | #59 `6ada76562e104598db601c478dabf88437e0556b` y #61 `0c559a6bb5037eb1a02b0919dd399ea328126694`; #61 incluye ese #59 |
 
-Al preparar esta guía, ambos PR seguían abiertos y aún no estaban fusionados.
+Ambos PR ya están fusionados en `stable`. El árbol verificado
+`83c63d4aa0893b3a6855c3d46fa0293c7774b4a4` coincide exactamente con el de #61
+revisado, sin modificaciones adicionales respecto a ese árbol.
 `ProviderOutbound`, las correcciones de identidad/recuperación y los runners
-citados pertenecen al perfil integrado: **no existen todos en aquella base
-`stable`**. Los ejemplos de transporte y pruebas siguientes requieren ese perfil.
-Antes de implementarlos, integrar la dependencia o declarar el nuevo PR dependiente;
-no sustituir módulos ausentes por peticiones sin guard.
+citados están en ese `stable` integrado. Los ejemplos siguientes requieren esas
+capacidades; no todas existen en la base histórica ni en otros checkouts antiguos.
+Si se trabaja sobre uno anterior, integrar la dependencia o declarar el nuevo PR
+dependiente; no sustituir módulos ausentes por peticiones sin guard.
 
 Al empezar, registrar base, dependencias y candidato exactos. Antes de publicar o
 resolver un conflicto, volver a comprobarlos. Los SHA anteriores identifican esta
@@ -518,7 +521,7 @@ Distinguir metadata de media. Reescribir un manifiesto pequeño y devolver URLs
 CDN permite que el player descargue segmentos; decodificar o retransmitirlos en
 el VPS cambia coste, rendimiento y contrato operativo.
 
-La política actual de `stable925` deja de **ofrecer** DASH/ClearKey retransmitido.
+La política del perfil integrado deja de **ofrecer** DASH/ClearKey retransmitido.
 No añadir productores que lo vuelvan a publicar ni anunciarlo como requisito de
 aceptación. Que persistan rutas heredadas no significa soporte ofrecido o guard
 completo de todas las rutas de vídeo.

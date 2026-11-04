@@ -35,19 +35,22 @@ commit, environment, format and player that were tested.
 
 ## 1. Version and prerequisites
 
-**Reference date for this edition: November 4, 2026.** Distinguish two profiles:
+**Reference date for this edition: November 4, 2026, after the #59/#61 merges.**
 
-| Profile | What it represents |
+| Reference | What it represents |
 | --- | --- |
-| Documentation base | `stable` at `92589e4c0bef327d7cc483c3fbe2d40908ba8e17` |
-| Guarded integration | #59 `6ada76562e104598db601c478dabf88437e0556b` and #61 `0c559a6bb5037eb1a02b0919dd399ea328126694`; #61 includes that exact #59 |
+| Historical pre-integration base | `stable` at `92589e4c0bef327d7cc483c3fbe2d40908ba8e17` |
+| Verified integrated stable | `4bcf65e0c42d0a63581f795a58b111cfe94ec30e` |
+| Reviewed provenance | #59 `6ada76562e104598db601c478dabf88437e0556b` and #61 `0c559a6bb5037eb1a02b0919dd399ea328126694`; #61 includes that exact #59 |
 
-When this guide was prepared, both PRs were still open and unmerged.
+Both PRs are now merged into `stable`. Its verified tree,
+`83c63d4aa0893b3a6855c3d46fa0293c7774b4a4`, exactly matches the reviewed #61 tree:
+there are no additional file changes beyond that reviewed #61 tree.
 `ProviderOutbound`, the identity/recovery corrections and the cited runners
-belong to the integrated profile: **they are not all present in that `stable`
-base**. The transport and test examples below require that profile. Before
-implementing them, integrate the dependency or declare the new PR dependent on
-it; do not replace missing modules with unguarded requests.
+are present in that integrated `stable`. The examples below require those
+capabilities; they are not all present in the historical base or other older
+checkouts. On an older checkout, integrate the dependency or declare the new PR
+dependent on it; do not replace missing modules with unguarded requests.
 
 At the start, record the exact base, dependencies and candidate. Recheck them
 before publishing or resolving a conflict. The SHAs above identify this edition;
@@ -521,7 +524,7 @@ Distinguish metadata from media. Rewriting a small manifest and returning CDN
 URLs lets the player download segments; decoding or relaying them on the VPS
 changes costs, performance and the operational contract.
 
-The current `stable925` policy stops **offering** relayed DASH/ClearKey. Do not
+The integrated profile policy stops **offering** relayed DASH/ClearKey. Do not
 add producers that publish it again or describe it as an acceptance requirement.
 The continued presence of legacy routes does not establish offered support or
 complete destination guarding across every video route.

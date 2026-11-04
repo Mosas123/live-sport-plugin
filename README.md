@@ -210,7 +210,8 @@ Visit `http://localhost:7000/configure` to customize:
 
 Before adding a provider, follow the [Spanish provider guide](docs/PROVIDER_GUIDE.md),
 [English guide](docs/PROVIDER_GUIDE.en.md) and [PR/AI task template](docs/PROVIDER_PR_TEMPLATE.md).
-The guides distinguish current stable from the guarded #59/#61 integration profile.
+Current stable includes the reviewed #59/#61 profile; the guides also explain
+the historical baseline and capability checks for older checkouts.
 
 ```bash
 # 1. Install dependencies

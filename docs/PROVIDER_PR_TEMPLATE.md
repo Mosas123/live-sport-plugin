@@ -5,9 +5,9 @@ all `<placeholders>` and delete cases that do not apply with an explicit reason.
 An unchecked box or `NOT RUN` is not a passing test.
 
 This is a proposed provider contribution workflow, not a claim about GitHub
-branch-protection rules. Its guarded integration profile assumes the reviewed
-#59/#61 behavior described in the guide. Verify the actual target tree first;
-these capabilities are not automatically available on an older `stable` tree.
+branch-protection rules. The guide records the merged stable baseline containing
+reviewed #59/#61 behavior. Verify the actual target tree first; these capabilities
+are not automatically available on an older checkout.
 
 ## Copy into the PR description
 
