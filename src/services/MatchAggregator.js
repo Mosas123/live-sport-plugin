@@ -288,6 +288,8 @@ const COMPOUND_ALIASES = [
     [/\bsheff(?:ield)?\s*(?:utd|united)\b/g, 'sheffieldunited'],
     [/\bbe(?:in\s*sport|\s*in)\b/g, 'beinsport'],
     [/\bal[\s\-]nassr\b/g, 'alnassr'],
+    // Alternate transliterations of the Saudi club, limited to its full name.
+    [/\bal[\s\-]haz(?:e)?m\b/g, 'alhazm'],
     [/\bal[\s\-]hilal\b/g, 'alhilal'],
     [/\bal[\s\-]ahly\b/g, 'alahly'],
     [/\bboca\s*juniors\b|\bca\s*boca\b/g, 'bocajuniors'],
