@@ -47,12 +47,24 @@ function createNativeGuardedFetch({ maxSlots = 4, maxWaiters = 128, admissionWai
   let nextKeyId = 1, nextSlotId = 1;
   let closed = false, closing, wakeInFlight = false;
   const mark = (phase, hop) => { try { onPhase?.(phase, hop); } catch (_) { /* diagnostic only */ } };
+  // Snapshot the *waiting* queue only when an admission diagnostic is emitted.
+  // No URLs, headers, signed tokens or proxy credentials enter this structure.
+  function queueDiagnostic() {
+    const byOwner = { catalog: 0, manifest: 0, wasm: 0, other: 0 };
+    let oldestWaitMs = 0;
+    const observedAt = now();
+    for (const waiter of waiters) {
+      byOwner[waiter.owner]++;
+      oldestWaitMs = Math.max(oldestWaitMs, Math.max(0, observedAt - waiter.enqueuedAt));
+    }
+    return { waiting: waiters.length, waking: wakeInFlight, maxWaiters, oldestWaitMs, byOwner };
+  }
   function notifyWaiter() {
     if (wakeInFlight) return;
     const waiter = waiters.shift();
     if (waiter) { wakeInFlight = true; waiter.wake(); }
   }
-  function waitForCapacity(signal, until, diagnostic, front = false) {
+  function waitForCapacity(signal, until, diagnostic, front = false, owner = 'other') {
     signal.throwIfAborted();
     const remaining = until - performance.now();
     if (remaining <= 0 || waiters.length + (wakeInFlight ? 1 : 0) >= maxWaiters) {
@@ -61,7 +73,7 @@ function createNativeGuardedFetch({ maxSlots = 4, maxWaiters = 128, admissionWai
     }
     return new Promise((resolve, reject) => {
       let timer;
-      const waiter = { wake: () => finish(resolve) };
+      const waiter = { wake: () => finish(resolve), owner, enqueuedAt: now() };
       const abort = () => finish(reject, signal.reason);
       function finish(fn, value) {
         const index = waiters.indexOf(waiter);
@@ -83,9 +95,9 @@ function createNativeGuardedFetch({ maxSlots = 4, maxWaiters = 128, admissionWai
       signal.throwIfAborted();
     }
     const keyId = records.find(r => r.key === key)?.keyId || nextKeyId;
-    const diagnostic = () => ({ threadId, poolId, requested: { keyId, profile: configuration.profile, egress: configuration.proxyUrl ? 'proxy' : 'direct', owner }, limit: maxSlots, slots: records.map(r => ({ slotId: r.slotId, keyId: r.keyId, profile: r.profile, egress: r.egress, owner: r.owner || 'idle', state: !r.slot ? 'creating' : r.reserved ? 'reserved' : r.slot.busy ? 'busy' : 'idle', phase: r.reserved ? r.phase : r.slot?.busy ? 'draining' : 'idle', ...(r.reserved ? { reservationAgeMs: Math.max(0, now() - r.reservedAt) } : {}), ...(r.slot?.busy && r.operationStartedAt !== undefined ? { operationAgeMs: Math.max(0, now() - r.operationStartedAt) } : {}) })) });
+    const diagnostic = () => ({ threadId, poolId, requested: { keyId, profile: configuration.profile, egress: configuration.proxyUrl ? 'proxy' : 'direct', owner }, limit: maxSlots, queue: queueDiagnostic(), slots: records.map(r => ({ slotId: r.slotId, keyId: r.keyId, profile: r.profile, egress: r.egress, owner: r.owner || 'idle', state: !r.slot ? 'creating' : r.reserved ? 'reserved' : r.slot.busy ? 'busy' : 'idle', phase: r.reserved ? r.phase : r.slot?.busy ? 'draining' : 'idle', ...(r.reserved ? { reservationAgeMs: Math.max(0, now() - r.reservedAt) } : {}), ...(r.slot?.busy && r.operationStartedAt !== undefined ? { operationAgeMs: Math.max(0, now() - r.operationStartedAt) } : {}) })) });
     if (!resumed && (waiters.length || wakeInFlight)) {
-      await waitForCapacity(signal, waitUntil, diagnostic);
+      await waitForCapacity(signal, waitUntil, diagnostic, false, owner);
       return acquire(key, configuration, signal, owner, waitUntil, true);
     }
     let record = records.find(item => item.key === key && item.slot && !item.reserved && !item.slot.busy);
@@ -114,7 +126,7 @@ function createNativeGuardedFetch({ maxSlots = 4, maxWaiters = 128, admissionWai
       const idle = records.find(item => item.key !== key && item.slot && !item.reserved && !item.slot.busy);
       if (!idle) {
         if (resumed) wakeInFlight = false;
-        await waitForCapacity(signal, waitUntil, diagnostic, resumed);
+        await waitForCapacity(signal, waitUntil, diagnostic, resumed, owner);
         return acquire(key, configuration, signal, owner, waitUntil, true);
       }
       // Reserve synchronously, before awaiting closure, so another request cannot
