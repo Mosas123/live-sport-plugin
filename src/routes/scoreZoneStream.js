@@ -114,7 +114,8 @@ async function getOrRemintPlaybackUrl(meta, channelId, forceFresh = false) {
 
     const channelsRes = await safeFetch(`${SCOREZONE_API_BASE}/api/matches/channels?${qs}`, {
       headers: SCOREZONE_HEADERS,
-      timeoutMs: 8000
+      timeoutMs: 8000,
+      diagnosticOwner: 'manifest'
     });
 
     if (!channelsRes || !channelsRes.ok) {
@@ -139,7 +140,8 @@ async function getOrRemintPlaybackUrl(meta, channelId, forceFresh = false) {
       ...SCOREZONE_HEADERS
     },
     body: JSON.stringify({ matchKey, channelId }),
-    timeoutMs: 8000
+    timeoutMs: 8000,
+    diagnosticOwner: 'manifest'
   });
 
   if (!playbackRes || !playbackRes.ok) {
@@ -249,6 +251,7 @@ router.get('/api/scorezone/manifest/:sourceId/:channelId.m3u8', async (req, res)
     let manifestRes = await safeFetch(playbackUrl, {
       headers: SCOREZONE_HEADERS,
       timeoutMs: 8000,
+      diagnosticOwner: 'manifest',
       maxBodyBytes: 2 * 1024 * 1024
     });
 
@@ -260,6 +263,7 @@ router.get('/api/scorezone/manifest/:sourceId/:channelId.m3u8', async (req, res)
       manifestRes = await safeFetch(playbackUrl, {
         headers: SCOREZONE_HEADERS,
         timeoutMs: 8000,
+        diagnosticOwner: 'manifest',
         maxBodyBytes: 2 * 1024 * 1024
       });
     }
@@ -296,6 +300,7 @@ router.get('/api/scorezone/manifest/:sourceId/:channelId.m3u8', async (req, res)
         const variantRes = await safeFetch(targetVariantUrl, {
           headers: SCOREZONE_HEADERS,
           timeoutMs: 8000,
+          diagnosticOwner: 'manifest',
           maxBodyBytes: 2 * 1024 * 1024
         });
 
